@@ -1,0 +1,56 @@
+# =============================================================================
+# klimaat-wijkprofielen-poc  —  default configuration
+# =============================================================================
+# All paths are relative to the project root (where this file lives).
+# Override any value with a CLI argument; config values serve as defaults.
+# Duplicate this file as config.local.yaml (git-ignored) for personal overrides.
+
+# -----------------------------------------------------------------------------
+# Input: CBS Wijk- en Buurtenkaart
+# Download: https://www.pdok.nl/downloads/-/article/cbs-wijk-en-buurtkaart
+# -----------------------------------------------------------------------------
+cbs_path: data/raw/wijkenbuurten_2023.gpkg
+cbs_layer: buurten_2023          # layer inside the GeoPackage; null = first layer
+
+# -----------------------------------------------------------------------------
+# Input: Klimaateffectatlas rasters
+# Each entry is  prefix: relative/path/to/file.tif
+# The prefix becomes the column-name prefix in the output (e.g. hitte_mean).
+# Download GeoTIFFs from: https://www.klimaateffectatlas.nl
+# -----------------------------------------------------------------------------
+rasters:
+  hitte:    data/raw/hitte_gevoelstemperatuur.tif
+  droogte:  data/raw/droogte_neerslagtekort.tif
+  # wateroverlast: data/raw/wateroverlast_overstroming.tif
+
+# -----------------------------------------------------------------------------
+# Filter
+# Set to null to process all municipalities in the dataset.
+# -----------------------------------------------------------------------------
+gemeente: Eindhoven              # e.g. Utrecht, Haarlem, Tilburg, Breda — or null
+
+# -----------------------------------------------------------------------------
+# Zonal statistics to calculate
+# Choices: mean max min std count sum median range
+#          majority minority variety percentile_25 percentile_75
+# -----------------------------------------------------------------------------
+stats:
+  - mean
+  - max
+  - std
+  - count
+
+# -----------------------------------------------------------------------------
+# Threshold
+# Pixels with value > threshold are counted; result stored as
+# {prefix}_pct_above_{threshold} column.
+# Set to null to skip threshold calculation.
+# -----------------------------------------------------------------------------
+threshold: 30.0
+
+# -----------------------------------------------------------------------------
+# Output
+# Enriched GeoPackages are written to this directory.
+# The filename is derived from the municipality name (or "all" when unfiltered).
+# -----------------------------------------------------------------------------
+output_dir: output
