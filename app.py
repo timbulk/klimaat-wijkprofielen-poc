@@ -103,6 +103,39 @@ def fetch_wms_layers(wms_url: str) -> dict[str, str]:
         return WMS_LAYERS_FALLBACK
 
 
+@st.cache_data(show_spinner=False)
+def read_existing_gpkg_layers(gpkg_path: str) -> dict:
+    """Read an existing output GeoPackage and return info about its contents.
+
+    Returns a dict with:
+      - "columns": list of all non-geometry column names
+      - "stat_columns": columns that look like enriched stat columns (contain _)
+      - "prefixes": unique prefixes derived from stat column names
+      - "n_rows": number of features
+
+    Returns an empty dict when the file does not exist or cannot be read.
+    """
+    path = Path(gpkg_path)
+    if not path.exists():
+        return {}
+    try:
+        gdf = gpd.read_file(path, engine="pyogrio")
+        all_cols  = [c for c in gdf.columns if c != "geometry"]
+        # Stat columns have pattern {prefix}_{statname}
+        stat_cols = [c for c in all_cols if "_" in c and c.rsplit("_", 1)[-1]
+                     in ("mean", "max", "min", "std", "count", "sum", "median",
+                         "range", "majority", "minority", "variety")]
+        prefixes  = sorted({c.rsplit("_", 1)[0] for c in stat_cols})
+        return {
+            "columns":     all_cols,
+            "stat_columns": stat_cols,
+            "prefixes":    prefixes,
+            "n_rows":      len(gdf),
+        }
+    except Exception:
+        return {}
+
+
 def gdf_to_gpkg_bytes(gdf: gpd.GeoDataFrame) -> bytes:
     """Serialize a GeoDataFrame to GeoPackage bytes for download."""
     with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
@@ -210,6 +243,36 @@ with st.sidebar:
 
     st.divider()
 
+    # ── Bestaand GeoPackage inlezen ───────────────────────────────────────────
+    st.subheader("📦 Bestaand GeoPackage")
+    existing_gpkg = st.text_input(
+        "Pad naar bestaand output GeoPackage (optioneel)",
+        value="",
+        placeholder="output/eindhoven_klimaat.gpkg",
+        help="Lees een eerder gegenereerd GeoPackage in om te zien welke lagen er al in zitten.",
+    )
+
+    existing_info = {}
+    if existing_gpkg:
+        existing_info = read_existing_gpkg_layers(
+            str(PROJECT_ROOT / existing_gpkg) if not Path(existing_gpkg).is_absolute()
+            else existing_gpkg
+        )
+        if existing_info:
+            st.success(
+                f"✅ {existing_info['n_rows']} features · "
+                f"{len(existing_info['stat_columns'])} stat-kolommen"
+            )
+            if existing_info["prefixes"]:
+                st.caption("Aanwezige lagen: " +
+                           ", ".join(f"`{p}`" for p in existing_info["prefixes"]))
+            with st.expander("Alle kolommen bekijken"):
+                st.write(existing_info["columns"])
+        else:
+            st.warning("Bestand niet gevonden of kan niet worden gelezen.")
+
+    st.divider()
+
     # ── Databron ─────────────────────────────────────────────────────────────
     st.subheader("🛰️ Databron")
     source_mode = st.radio(
@@ -253,9 +316,17 @@ with st.sidebar:
         wms_layers_selected = {label: available_layers[label] for label in wms_labels}
 
         if wms_layers_selected:
-            st.caption(
-                "Geselecteerd: " + ", ".join(f"`{v}`" for v in wms_layers_selected.values())
-            )
+            # Toon per laag of de prefix al aanwezig is in een bestaand GeoPackage
+            captions = []
+            for lbl, lname in wms_layers_selected.items():
+                prefix = lname[:20]
+                already = (
+                    existing_info.get("prefixes") and
+                    prefix in existing_info["prefixes"]
+                )
+                marker = " ⚠️ _al aanwezig_" if already else ""
+                captions.append(f"`{prefix}`{marker}")
+            st.caption("Prefixen in output: " + "  ·  ".join(captions))
         else:
             st.warning("Selecteer minimaal één WMS-laag.", icon="⚠️")
 
