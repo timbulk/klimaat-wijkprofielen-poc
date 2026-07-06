@@ -239,14 +239,25 @@ with st.sidebar:
             if default_layer_name in layer_names else 0
         )
 
-        wms_label = st.selectbox(
-            "WMS-laag",
+        # Pre-selecteer de standaardlaag uit config.yaml
+        default_label = layer_labels[default_idx] if layer_labels else None
+        default_selection = [default_label] if default_label else []
+
+        wms_labels = st.multiselect(
+            "WMS-lagen (meerdere mogelijk)",
             layer_labels,
-            index=default_idx,
-            help=f"{len(available_layers)} lagen beschikbaar op de WMS.",
+            default=default_selection,
+            help=f"{len(available_layers)} lagen beschikbaar. Selecteer één of meer lagen — elke laag krijgt eigen kolommen in de output.",
         )
-        wms_layer = available_layers[wms_label]
-        st.caption(f"Laagnaam: `{wms_layer}`")
+        # Maak een dict van geselecteerde {label: layer_name}
+        wms_layers_selected = {label: available_layers[label] for label in wms_labels}
+
+        if wms_layers_selected:
+            st.caption(
+                "Geselecteerd: " + ", ".join(f"`{v}`" for v in wms_layers_selected.values())
+            )
+        else:
+            st.warning("Selecteer minimaal één WMS-laag.", icon="⚠️")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -302,11 +313,12 @@ with st.sidebar:
     st.divider()
 
     # ── Run-knop ─────────────────────────────────────────────────────────────
+    _no_layers = use_wms and not wms_layers_selected
     run_button = st.button(
         "▶️ Run Analyse",
         type="primary",
         use_container_width=True,
-        disabled=not gemeente,
+        disabled=(not gemeente or _no_layers),
     )
 
 # ---------------------------------------------------------------------------
@@ -469,24 +481,35 @@ try:
 
     # Stap 2: Raster verwerken
     if use_wms:
-        status.info(f"🛰️ WMS-laag downloaden: `{wms_layer}`…")
-        progress.progress(45, text="WMS downloaden…")
+        n_layers   = len(wms_layers_selected)
+        prog_start = 40
+        prog_end   = 90
+        prog_step  = (prog_end - prog_start) // max(n_layers, 1)
 
-        with TempRaster(suffix=f"_{wms_layer}.tif") as tmp_path:
-            download_wms_as_geotiff(
-                gdf,
-                wms_url=WMS_URL,
-                layer_name=wms_layer,
-                resolution_m=wms_resolution,
-                buffer_m=wms_buffer,
-                output_path=tmp_path,
+        for idx, (wms_label, wms_layer_name) in enumerate(wms_layers_selected.items()):
+            prog_now = prog_start + idx * prog_step
+            status.info(
+                f"🛰️ ({idx + 1}/{n_layers}) Downloaden: `{wms_layer_name}`…"
             )
-            progress.progress(65, text="Zonal statistics berekenen…")
-            status.info("📐 Zonal statistics berekenen…")
-            prefix = wms_layer[:20]
-            gdf = _enrich_from_raster(
-                gdf, tmp_path, prefix, selected_stats, threshold, normalize,
-            )
+            progress.progress(prog_now, text=f"WMS laag {idx + 1}/{n_layers}…")
+
+            with TempRaster(suffix=f"_{wms_layer_name}.tif") as tmp_path:
+                download_wms_as_geotiff(
+                    gdf,
+                    wms_url=WMS_URL,
+                    layer_name=wms_layer_name,
+                    resolution_m=wms_resolution,
+                    buffer_m=wms_buffer,
+                    output_path=tmp_path,
+                )
+                progress.progress(prog_now + prog_step // 2,
+                                  text=f"Zonal stats laag {idx + 1}/{n_layers}…")
+                status.info(f"📐 ({idx + 1}/{n_layers}) Zonal statistics: `{wms_layer_name}`…")
+                # Gebruik de laagnaam als prefix (max 20 tekens)
+                prefix = wms_layer_name[:20]
+                gdf = _enrich_from_raster(
+                    gdf, tmp_path, prefix, selected_stats, threshold, normalize,
+                )
     else:
         local_path = PROJECT_ROOT / local_raster_path
         if not local_path.exists():
@@ -505,7 +528,7 @@ try:
     st.session_state["gdf"]           = gdf
     st.session_state["original_cols"] = original_cols
     st.session_state["gemeente"]      = gemeente
-    st.session_state["prefix"]        = wms_layer[:20] if use_wms else raster_prefix
+    st.session_state["prefix"]        = [v[:20] for v in wms_layers_selected.values()] if use_wms else [raster_prefix]
     st.session_state["gpkg_bytes"]    = gdf_to_gpkg_bytes(gdf)
     st.session_state["gpkg_filename"] = f"{slug}_klimaat.gpkg"
 
