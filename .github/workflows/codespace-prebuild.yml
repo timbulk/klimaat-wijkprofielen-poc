@@ -1,0 +1,21 @@
+name: Codespace Prebuild
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  prebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install GDAL
+        run: sudo apt-get update -qq && sudo apt-get install -y gdal-bin libgdal-dev
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Smoke test import
+        run: python -c "import geopandas, rasterio, streamlit, rasterstats; print('All imports OK')"
