@@ -5,3 +5,4 @@ pandas
 fiona
 pyogrio
 matplotlib
+PyYAML
