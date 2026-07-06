@@ -168,23 +168,68 @@ def resolve_config(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, A
 # Data loading
 # ---------------------------------------------------------------------------
 
+# Candidate column names for the municipality name, in order of preference.
+# CBS changed the column name between dataset editions:
+#   - Older editions (up to ~2022):  GM_NAAM
+#   - Newer editions (2023+):        gemeentenaam
+_GEMEENTE_COLS = ("GM_NAAM", "gemeentenaam")
+
+
+def _find_gemeente_col(gdf: gpd.GeoDataFrame) -> str:
+    """Return the municipality-name column present in *gdf*.
+
+    Tries each name in ``_GEMEENTE_COLS`` in order.  Raises a clear
+    :class:`ValueError` listing all available columns when none is found,
+    so the user knows exactly what to look for.
+
+    Parameters
+    ----------
+    gdf: Loaded CBS GeoDataFrame.
+
+    Raises
+    ------
+    ValueError  When no known municipality-name column is present.
+    """
+    for candidate in _GEMEENTE_COLS:
+        if candidate in gdf.columns:
+            log.debug("Gemeente-kolom gevonden: '%s'", candidate)
+            return candidate
+
+    raise ValueError(
+        f"Geen gemeente-naamkolom gevonden. "
+        f"Gezocht naar: {list(_GEMEENTE_COLS)}. "
+        f"Beschikbare kolommen: {list(gdf.columns)}. "
+        "Controleer de CBS-laagnaam of pas _GEMEENTE_COLS aan in enrich_wijken.py."
+    )
+
+
 def load_wijken(
     gpkg_path: Path,
     layer: str | None,
     gemeente: str | None,
 ) -> gpd.GeoDataFrame:
-    """Load CBS neighbourhoods and optionally filter by municipality.
+    """Load CBS neighbourhoods and optionally filter by municipality name.
+
+    The CBS dataset has used different column names for the municipality name
+    across editions (``GM_NAAM`` in older files, ``gemeentenaam`` from 2023+).
+    This function auto-detects the correct column via :func:`_find_gemeente_col`.
 
     Parameters
     ----------
     gpkg_path:  Path to CBS GeoPackage or Shapefile.
-    layer:      Layer name (None → first layer).
-    gemeente:   Municipality name to filter on (GM_NAAM). None → keep all.
+    layer:      Layer name inside the GeoPackage (None → first layer).
+    gemeente:   Municipality name to filter on, case-insensitive.
+                None → return all municipalities unchanged.
+
+    Returns
+    -------
+    Filtered GeoDataFrame with the selected neighbourhood polygons.
 
     Raises
     ------
     FileNotFoundError  When *gpkg_path* does not exist.
-    ValueError         When GM_NAAM is missing or *gemeente* yields no rows.
+    ValueError         When no municipality-name column is found, or when
+                       *gemeente* matches no rows.
     """
     if not gpkg_path.exists():
         raise FileNotFoundError(f"Wijkenbestand niet gevonden: {gpkg_path}")
@@ -194,18 +239,21 @@ def load_wijken(
     log.info("  %d rijen geladen, CRS: %s", len(gdf), gdf.crs)
 
     if gemeente:
-        col = "GM_NAAM"
-        if col not in gdf.columns:
-            raise ValueError(
-                f"Kolom '{col}' niet gevonden. "
-                f"Beschikbare kolommen: {list(gdf.columns)}"
-            )
+        col = _find_gemeente_col(gdf)
+        log.info("  Filter op kolom '%s' = '%s'", col, gemeente)
+
         mask = gdf[col].str.strip().str.lower() == gemeente.strip().lower()
-        gdf = gdf[mask].copy()
+        gdf  = gdf[mask].copy()
+
         if gdf.empty:
+            # Help the user with a sample of actual values so they can spot typos
+            sample = gdf[col].dropna().unique()[:10].tolist() if col in gdf.columns else []
             raise ValueError(
-                f"Geen rijen voor gemeente '{gemeente}'. Controleer de schrijfwijze."
+                f"Geen rijen gevonden voor gemeente '{gemeente}' in kolom '{col}'. "
+                f"Controleer de schrijfwijze. "
+                + (f"Voorbeeldwaarden: {sample}" if sample else "")
             )
+
         log.info("  Gefilterd op '%s': %d rijen", gemeente, len(gdf))
 
     return gdf
