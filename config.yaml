@@ -40,24 +40,23 @@ gemeente: Eindhoven
 # -----------------------------------------------------------------------------
 # Lokale rasters (GeoTIFF-bestanden van Klimaateffectatlas)
 #
-# Formaat:  prefix: pad/naar/bestand.tif
-# De prefix wordt de kolomnaam-prefix in de uitvoer (bijv. hitte_mean).
+# Standaard uitgeschakeld — WMS is de primaire databron (zie hieronder).
+# Schakel in door de commentaar-tekens te verwijderen en de paden in te vullen.
 #
 # Download rasters op:  https://www.klimaateffectatlas.nl
-# Zet onnodige regels in commentaar als je ze nog niet hebt gedownload.
+# Formaat:  prefix: pad/naar/bestand.tif
 # -----------------------------------------------------------------------------
 rasters:
-  hitte:    data/raw/hitte_gevoelstemperatuur.tif
-  droogte:  data/raw/droogte_neerslagtekort.tif
+  # hitte:    data/raw/hitte_gevoelstemperatuur.tif
+  # droogte:  data/raw/droogte_neerslagtekort.tif
   # wateroverlast: data/raw/wateroverlast_overstroming.tif
 
 
 # -----------------------------------------------------------------------------
-# WMS-raster (rechtstreekse download, geen lokaal bestand nodig)
+# WMS-raster (standaard actief — geen lokaal bestand nodig)
 #
-# Zet wms_layer op de naam van een WMS-laag om die te gebruiken.
 # De download wordt automatisch beperkt tot de bbox van de gekozen gemeente.
-# Zet op null om WMS uit te schakelen (gebruik dan alleen lokale rasters).
+# Zet wms_layer op null om WMS uit te schakelen.
 #
 # Beschikbare lagen bekijken:
 #   python -c "
@@ -67,7 +66,7 @@ rasters:
 #     print('\n'.join(wms.contents.keys()))
 #   "
 # -----------------------------------------------------------------------------
-wms_layer: null                  # bijv. hitteeiland_r_hitte — null = uitgeschakeld
+wms_layer: hitteeiland_r_hitte   # null = uitgeschakeld
 wms_url:   https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_public/wms
 wms_resolution: 50               # pixels in meters (50 = snel; 10 = gedetailleerd)
 wms_buffer: 500                  # buffer in meters rondom de gemeente-bbox
