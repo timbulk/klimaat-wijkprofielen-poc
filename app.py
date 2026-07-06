@@ -1,4 +1,4 @@
-﻿app.py
+"""
 ------
 Streamlit web interface for the klimaat-wijkprofielen-poc pipeline.
 
