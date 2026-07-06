@@ -5,30 +5,30 @@ enrich_wijken.py
 Enrich CBS Wijk- en Buurtenkaart polygons with climate impact data from the
 Klimaateffectatlas by calculating zonal statistics per neighbourhood.
 
-Rasters are passed as ``key=path`` pairs so the key becomes the column prefix:
+Configuration is read from config.yaml (project root) and can be fully
+overridden via command-line arguments.  CLI flags always win over config.
+
+Rasters can be passed as ``key=path`` pairs so the key becomes the column
+prefix, or as plain paths (prefix derived from filename stem):
 
     --rasters hitte=data/raw/hitte.tif droogte=data/raw/droogte.tif
 
-When no explicit key is provided the prefix is derived from the filename stem.
-
 Usage examples
 --------------
-# Single raster with auto-derived prefix
+# Use config.yaml for everything
+python scripts/enrich_wijken.py
+
+# Use a different config file
+python scripts/enrich_wijken.py --config config.local.yaml
+
+# Override gemeente and output on the CLI
+python scripts/enrich_wijken.py --gemeente Utrecht --output output/utrecht.gpkg
+
+# Single raster run, no config file
 python scripts/enrich_wijken.py \
     --wijken  data/raw/wijkenbuurten_2023.gpkg \
-    --rasters data/raw/hitte_gevoelstemperatuur.tif \
+    --rasters hitte=data/raw/hitte.tif \
     --output  output/buurten_hitte.gpkg
-
-# Multiple rasters with explicit prefixes, filtered to one municipality
-python scripts/enrich_wijken.py \
-    --wijken     data/raw/wijkenbuurten_2023.gpkg \
-    --layer      buurten_2023 \
-    --rasters    hitte=data/raw/hitte_gevoelstemperatuur.tif \
-                 droogte=data/raw/droogte_neerslagtekort.tif \
-    --gemeente   Amsterdam \
-    --stats      mean max std count \
-    --threshold  30 \
-    --output     output/amsterdam_klimaat.gpkg
 """
 
 from __future__ import annotations
@@ -38,11 +38,12 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
+import yaml
 from rasterstats import zonal_stats
 
-# Local helpers — utils.py lives in the same directory
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import (
     calculate_percentage_above_threshold,
@@ -61,6 +62,113 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# Default config file relative to the project root
+DEFAULT_CONFIG = Path(__file__).parent.parent / "config.yaml"
+
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
+
+def load_config(config_path: Path) -> dict[str, Any]:
+    """Load and return the YAML configuration file.
+
+    Parameters
+    ----------
+    config_path:
+        Path to the YAML config file.
+
+    Returns
+    -------
+    Parsed config as a plain dict.  Returns an empty dict when the file
+    does not exist so callers can always treat the result as a dict.
+    """
+    if not config_path.exists():
+        log.debug("Geen config gevonden op %s — alleen CLI-argumenten gebruikt", config_path)
+        return {}
+
+    log.info("Laad configuratie van %s", config_path)
+    with config_path.open("r", encoding="utf-8") as fh:
+        cfg = yaml.safe_load(fh) or {}
+
+    return cfg
+
+
+def resolve_config(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    """Merge config-file values with CLI arguments.
+
+    CLI arguments always take precedence.  A value of None in *args* means
+    "not supplied on the CLI" and the config-file default is used instead.
+
+    Parameters
+    ----------
+    cfg:   Parsed config.yaml dict (may be empty).
+    args:  Parsed argparse Namespace.
+
+    Returns
+    -------
+    Resolved settings dict with keys: wijken, layer, rasters, gemeente,
+    stats, threshold, normalize, output.
+    """
+    root = Path(__file__).parent.parent  # project root for relative paths
+
+    def _path(val: str | None) -> Path | None:
+        return (root / val) if val else None
+
+    # ── wijken ──────────────────────────────────────────────────────────────
+    wijken_raw = args.wijken or cfg.get("cbs_path")
+    if not wijken_raw:
+        raise ValueError("Geen CBS-bestand opgegeven (--wijken of cbs_path in config).")
+    wijken = Path(wijken_raw) if Path(wijken_raw).is_absolute() else root / wijken_raw
+
+    # ── layer ───────────────────────────────────────────────────────────────
+    layer = args.layer if args.layer is not None else cfg.get("cbs_layer")
+
+    # ── rasters ─────────────────────────────────────────────────────────────
+    raster_map: dict[str, Path] = {}
+    if args.rasters:
+        raster_map = parse_raster_args(args.rasters, root)
+    elif cfg.get("rasters"):
+        for key, path_str in cfg["rasters"].items():
+            raster_map[key] = root / path_str if not Path(path_str).is_absolute() else Path(path_str)
+    if not raster_map:
+        raise ValueError("Geen rasters opgegeven (--rasters of rasters in config).")
+
+    # ── gemeente ─────────────────────────────────────────────────────────────
+    gemeente = args.gemeente if args.gemeente is not None else cfg.get("gemeente")
+
+    # ── stats ────────────────────────────────────────────────────────────────
+    stats = args.stats if args.stats else (cfg.get("stats") or ["mean", "max", "std", "count"])
+
+    # ── threshold ────────────────────────────────────────────────────────────
+    threshold: float | None
+    if args.threshold is not None:
+        threshold = args.threshold
+    else:
+        threshold = cfg.get("threshold")  # may be None when set to null in yaml
+
+    # ── normalize ────────────────────────────────────────────────────────────
+    normalize = args.normalize  # boolean flag — False when not on CLI; no config equiv.
+
+    # ── output ───────────────────────────────────────────────────────────────
+    if args.output:
+        output = args.output
+    else:
+        out_dir = root / (cfg.get("output_dir") or "output")
+        slug = (gemeente or "all").lower().replace(" ", "_")
+        output = out_dir / f"{slug}_klimaat.gpkg"
+
+    return {
+        "wijken":    wijken,
+        "layer":     layer,
+        "rasters":   raster_map,
+        "gemeente":  gemeente,
+        "stats":     stats,
+        "threshold": threshold,
+        "normalize": normalize,
+        "output":    output,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
@@ -74,13 +182,9 @@ def load_wijken(
 
     Parameters
     ----------
-    gpkg_path:
-        Path to the CBS GeoPackage (.gpkg) or Shapefile (.shp).
-    layer:
-        Layer name inside the GeoPackage.  When None the first layer is used.
-    gemeente:
-        Municipality name to filter on (GM_NAAM column).
-        Pass None to keep all municipalities.
+    gpkg_path:  Path to the CBS GeoPackage (.gpkg) or Shapefile (.shp).
+    layer:      Layer name inside the GeoPackage. None → first layer.
+    gemeente:   Municipality name to filter on (GM_NAAM). None → keep all.
 
     Returns
     -------
@@ -88,10 +192,8 @@ def load_wijken(
 
     Raises
     ------
-    FileNotFoundError
-        When *gpkg_path* does not exist.
-    ValueError
-        When the GM_NAAM column is missing or *gemeente* yields no rows.
+    FileNotFoundError  When *gpkg_path* does not exist.
+    ValueError         When GM_NAAM is missing or *gemeente* yields no rows.
     """
     if not gpkg_path.exists():
         raise FileNotFoundError(f"Wijkenbestand niet gevonden: {gpkg_path}")
@@ -140,19 +242,14 @@ def compute_zonal_stats(
 
     Parameters
     ----------
-    gdf:
-        GeoDataFrame aligned to the raster CRS — call
-        :func:`utils.reproject_if_needed` before passing it here.
-    raster_path:
-        Path to a single-band GeoTIFF.
-    stats:
-        Statistics to compute, e.g. ``["mean", "max", "std", "count"]``.
-    prefix:
-        Column-name prefix.  Each stat becomes ``{prefix}_{stat}``.
+    gdf:          GeoDataFrame aligned to the raster CRS.
+    raster_path:  Path to a single-band GeoTIFF.
+    stats:        Statistics to compute, e.g. ``["mean", "max", "std", "count"]``.
+    prefix:       Column-name prefix → ``{prefix}_{stat}`` per statistic.
 
     Returns
     -------
-    GeoDataFrame with new columns appended (one per requested statistic).
+    GeoDataFrame with new stat columns appended.
     """
     log.info(
         "Bereken zonal stats [%s] voor %s → prefix '%s'",
@@ -165,7 +262,7 @@ def compute_zonal_stats(
         gdf,
         str(raster_path),
         stats=stats,
-        nodata=None,      # honour the raster's own nodata value
+        nodata=None,
         all_touched=False,
     )
 
@@ -188,10 +285,8 @@ def save_output(gdf: gpd.GeoDataFrame, output_path: Path) -> None:
 
     Parameters
     ----------
-    gdf:
-        Enriched GeoDataFrame to persist.
-    output_path:
-        Destination path.  The parent directory is created when absent.
+    gdf:          Enriched GeoDataFrame.
+    output_path:  Destination path; parent directory is created when absent.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log.info("Schrijf resultaat naar %s", output_path)
@@ -200,14 +295,13 @@ def save_output(gdf: gpd.GeoDataFrame, output_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Argument parsing helpers
+# Argument-parsing helpers
 # ---------------------------------------------------------------------------
 
 def derive_prefix(raster_path: Path) -> str:
     """Derive a short column prefix from the raster filename stem.
 
-    Strips trailing year tags (``_2023``) and version tags (``_v2``) and
-    truncates to 20 characters so column names stay manageable.
+    Strips trailing year/version tags and truncates to 20 characters.
 
     Examples
     --------
@@ -219,7 +313,7 @@ def derive_prefix(raster_path: Path) -> str:
     return stem[:20]
 
 
-def parse_raster_args(raw: list[str]) -> dict[str, Path]:
+def parse_raster_args(raw: list[str], root: Path | None = None) -> dict[str, Path]:
     """Parse ``--rasters`` values into a ``{prefix: Path}`` mapping.
 
     Accepts two formats per entry:
@@ -229,17 +323,16 @@ def parse_raster_args(raw: list[str]) -> dict[str, Path]:
 
     Parameters
     ----------
-    raw:
-        List of strings as received from argparse (``nargs="+"``).
+    raw:   List of strings from argparse (``nargs="+"``).
+    root:  Optional project root; relative paths are resolved against it.
 
     Returns
     -------
-    Ordered dict mapping each prefix to its raster Path.
+    Ordered dict mapping each prefix to its resolved raster Path.
 
     Raises
     ------
-    ValueError
-        On duplicate prefixes (would cause column name collisions).
+    ValueError  On duplicate prefixes.
     """
     mapping: dict[str, Path] = {}
     for entry in raw:
@@ -251,9 +344,12 @@ def parse_raster_args(raw: list[str]) -> dict[str, Path]:
             raster_path = Path(entry.strip())
             prefix = derive_prefix(raster_path)
 
+        if root and not raster_path.is_absolute():
+            raster_path = root / raster_path
+
         if prefix in mapping:
             raise ValueError(
-                f"Dubbel prefix '{prefix}' gedetecteerd. "
+                f"Dubbel prefix '{prefix}'. "
                 "Gebruik expliciete sleutels: key=pad.tif."
             )
         mapping[prefix] = raster_path
@@ -265,36 +361,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="enrich_wijken",
         description=(
-            "Verrijk CBS wijken/buurten met klimaatdata uit de Klimaateffectatlas "
-            "via zonal statistics."
+            "Verrijk CBS wijken/buurten met klimaatdata via zonal statistics. "
+            "Leest standaard uit config.yaml; CLI-argumenten hebben voorrang."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
 
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        metavar="YAML",
+        help=f"Pad naar het YAML-configuratiebestand (standaard: {DEFAULT_CONFIG.name}).",
+    )
+    parser.add_argument(
         "--wijken",
         type=Path,
-        required=True,
+        default=None,
         metavar="GPKG",
-        help="Pad naar het CBS Wijk- en Buurtenkaart GeoPackage of Shapefile.",
+        help="Pad naar het CBS GeoPackage of Shapefile (overschrijft cbs_path in config).",
     )
     parser.add_argument(
         "--layer",
         type=str,
         default=None,
         metavar="NAAM",
-        help="Laagnaam in het GeoPackage (standaard: eerste laag).",
+        help="Laagnaam in het GeoPackage (overschrijft cbs_layer in config).",
     )
     parser.add_argument(
         "--rasters",
         nargs="+",
-        required=True,
+        default=None,
         metavar="[KEY=]PAD",
         help=(
-            "Een of meer rasters als 'key=pad.tif' (expliciete prefix) of "
-            "'pad.tif' (prefix afgeleid van bestandsnaam). "
-            "Voorbeeld: hitte=data/raw/hitte.tif droogte=data/raw/droogte.tif"
+            "Rasters als 'key=pad.tif' of 'pad.tif'. "
+            "Overschrijft rasters in config."
         ),
     )
     parser.add_argument(
@@ -302,48 +404,39 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         metavar="NAAM",
-        help="Filter op gemeentenaam (GM_NAAM kolom), bijv. 'Amsterdam'.",
+        help="Filter op gemeentenaam (overschrijft gemeente in config).",
     )
     parser.add_argument(
         "--stats",
         nargs="+",
-        default=["mean", "max", "std", "count"],
+        default=None,
         metavar="STAT",
         choices=AVAILABLE_STATS,
-        help=(
-            f"Te berekenen statistieken (standaard: mean max std count). "
-            f"Keuze uit: {', '.join(AVAILABLE_STATS)}."
-        ),
+        help="Te berekenen statistieken (overschrijft stats in config).",
     )
     parser.add_argument(
         "--threshold",
         type=float,
         default=None,
         metavar="WAARDE",
-        help=(
-            "Bereken ook het percentage pixels boven deze drempelwaarde per raster. "
-            "Voegt een kolom '{prefix}_pct_above_{threshold}' toe."
-        ),
+        help="Drempelwaarde voor percentage-boven-kolom (overschrijft threshold in config).",
     )
     parser.add_argument(
         "--normalize",
         action="store_true",
-        help=(
-            "Voeg genormaliseerde versies (0-1) toe van alle mean-kolommen. "
-            "Handig voor het maken van een samengestelde risicoscore."
-        ),
+        help="Voeg genormaliseerde (0-1) mean-kolommen toe.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        required=True,
+        default=None,
         metavar="GPKG",
-        help="Pad voor het uitvoer GeoPackage, bijv. output/buurten_klimaat.gpkg.",
+        help="Uitvoerpad (standaard: {output_dir}/{gemeente}_klimaat.gpkg).",
     )
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Toon uitgebreide debug-informatie.",
+        help="Toon DEBUG-logberichten.",
     )
 
     return parser
@@ -361,40 +454,39 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger().setLevel(logging.DEBUG)
 
     try:
-        # 1. Parse raster arguments → {prefix: Path}
-        raster_map = parse_raster_args(args.rasters)
-        log.info("Rasters: %s", {k: v.name for k, v in raster_map.items()})
+        # 1. Load config and merge with CLI args
+        cfg = load_config(args.config)
+        settings = resolve_config(cfg, args)
+
+        log.info(
+            "Instellingen: gemeente=%s  rasters=%s  stats=%s  threshold=%s",
+            settings["gemeente"] or "alle",
+            list(settings["rasters"].keys()),
+            settings["stats"],
+            settings["threshold"],
+        )
 
         # 2. Load CBS polygons
-        gdf = load_wijken(args.wijken, args.layer, args.gemeente)
+        gdf = load_wijken(settings["wijken"], settings["layer"], settings["gemeente"])
 
         # 3. Process each raster
-        for prefix, raster_path in raster_map.items():
-            # Align CRS using the util helper
+        for prefix, raster_path in settings["rasters"].items():
             gdf = reproject_if_needed(gdf, raster_path)
+            gdf = compute_zonal_stats(gdf, raster_path, settings["stats"], prefix)
 
-            # Standard zonal statistics
-            gdf = compute_zonal_stats(gdf, raster_path, args.stats, prefix)
-
-            # Optional threshold percentage
-            if args.threshold is not None:
-                log.info(
-                    "Bereken percentage boven drempel %.2f voor '%s'",
-                    args.threshold,
-                    prefix,
-                )
+            if settings["threshold"] is not None:
+                log.info("Drempelwaarde %.2f voor '%s'", settings["threshold"], prefix)
                 gdf = calculate_percentage_above_threshold(
-                    gdf, raster_path, args.threshold, prefix
+                    gdf, raster_path, settings["threshold"], prefix
                 )
 
-            # Optional min-max normalisation of the mean column
-            if args.normalize and f"{prefix}_mean" in gdf.columns:
+            if settings["normalize"] and f"{prefix}_mean" in gdf.columns:
                 col = f"{prefix}_mean"
                 gdf[f"{col}_norm"] = normalize_column(gdf, col)
-                log.info("  Genormaliseerde kolom toegevoegd: %s_norm", col)
+                log.info("  Genormaliseerde kolom: %s_norm", col)
 
         # 4. Save result
-        save_output(gdf, args.output)
+        save_output(gdf, settings["output"])
 
     except FileNotFoundError as exc:
         log.error("Bestand niet gevonden: %s", exc)
