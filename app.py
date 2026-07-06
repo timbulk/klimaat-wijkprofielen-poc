@@ -421,6 +421,20 @@ with st.sidebar:
 
     st.divider()
 
+    # ── Wijktypen ─────────────────────────────────────────────────────────────
+    st.subheader("🏘️ Wijktypen")
+    use_wijktypen = st.checkbox(
+        "Wijktype toevoegen als kolom",
+        value=True,
+        help=(
+            "Voegt een 'wijktype' kolom toe via een ruimtelijke join met de "
+            "Klimaateffectatlas WFS (laag: wijktypen_buurten). "
+            "Geeft elke buurt een stedelijk typologieklasse, bijv. 'Stadscentrum'."
+        ),
+    )
+
+    st.divider()
+
     # ── Run-knop ─────────────────────────────────────────────────────────────
     _no_layers = use_wms and not wms_layers_selected
     run_button = st.button(
@@ -491,10 +505,22 @@ if _prev_gdf is not None:
             f"CRS: {_prev_gdf.crs.to_string() if _prev_gdf.crs else '—'}"
         )
 
+    # Wijktype verdeling
+    if "wijktype" in _prev_gdf.columns:
+        with st.expander("🏘️ Wijktype verdeling", expanded=False):
+            _wt_counts = (
+                _prev_gdf["wijktype"]
+                .value_counts()
+                .reset_index()
+                .rename(columns={"index": "Wijktype", "wijktype": "Aantal buurten"})
+            )
+            st.dataframe(_wt_counts, use_container_width=True, hide_index=True)
+
     # Tabel
     st.subheader("📊 Statistieken per buurt")
     _name_col = next((c for c in ("buurtnaam", "BU_NAAM", "wijknaam", "WK_NAAM") if c in _prev_gdf.columns), None)
-    _disp_cols = ([_name_col] if _name_col else []) + _stat_cols + _thresh_cols + _norm_cols
+    _wt_col   = ["wijktype"] if "wijktype" in _prev_gdf.columns else []
+    _disp_cols = ([_name_col] if _name_col else []) + _wt_col + _stat_cols + _thresh_cols + _norm_cols
     if _disp_cols:
         _df_disp = style_summary_table(_prev_gdf[_disp_cols])
         st.dataframe(
@@ -629,6 +655,22 @@ try:
         gdf = _enrich_from_raster(
             gdf, local_path, raster_prefix, selected_stats, threshold, normalize,
         )
+
+    # Stap 3: Wijktypen toevoegen via WFS ruimtelijke join
+    if use_wijktypen:
+        progress.progress(88, text="Wijktypen ophalen via WFS…")
+        status.info("🏘️ Wijktypen ophalen via WFS…")
+        try:
+            from wijktypen import join_wijktypen
+            gdf = join_wijktypen(gdf)
+            n_filled = gdf["wijktype"].notna().sum()
+            status.info(f"✅ Wijktype toegewezen aan {n_filled}/{len(gdf)} buurten")
+        except Exception as exc:
+            st.warning(
+                f"⚠️ Wijktypen niet beschikbaar: {exc}\n"
+                "De overige resultaten worden wél opgeslagen.",
+                icon="⚠️",
+            )
 
     progress.progress(90, text="Resultaten opslaan…")
 
