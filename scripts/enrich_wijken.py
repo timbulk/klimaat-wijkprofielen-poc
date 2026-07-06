@@ -235,22 +235,24 @@ def load_wijken(
         raise FileNotFoundError(f"Wijkenbestand niet gevonden: {gpkg_path}")
 
     log.info("Laad wijken van %s (layer=%s)", gpkg_path.name, layer or "eerste laag")
-    gdf = gpd.read_file(gpkg_path, layer=layer, engine="pyogrio")
+    # Pass layer=0 (first layer) when no layer name is given, as required by pyogrio/fiona
+    gdf = gpd.read_file(gpkg_path, layer=layer if layer else 0, engine="pyogrio")
     log.info("  %d rijen geladen, CRS: %s", len(gdf), gdf.crs)
 
     if gemeente:
+        # Auto-detect the municipality name column (GM_NAAM or gemeentenaam)
         col = _find_gemeente_col(gdf)
         log.info("  Filter op kolom '%s' = '%s'", col, gemeente)
 
-        mask = gdf[col].str.strip().str.lower() == gemeente.strip().lower()
-        gdf  = gdf[mask].copy()
+        # Exact match — CBS values already have correct casing (e.g. "Eindhoven")
+        gdf = gdf[gdf[col] == gemeente].copy()
 
-        if gdf.empty:
-            # Help the user with a sample of actual values so they can spot typos
-            sample = gdf[col].dropna().unique()[:10].tolist() if col in gdf.columns else []
+        if len(gdf) == 0:
+            # Provide a sample of real values so the user can spot typos
+            sample = sorted(gdf[col].dropna().unique()[:10].tolist()) if col in gdf.columns else []
             raise ValueError(
                 f"Geen rijen gevonden voor gemeente '{gemeente}' in kolom '{col}'. "
-                f"Controleer de schrijfwijze. "
+                f"Controleer de schrijfwijze (hoofdlettergevoelig). "
                 + (f"Voorbeeldwaarden: {sample}" if sample else "")
             )
 
