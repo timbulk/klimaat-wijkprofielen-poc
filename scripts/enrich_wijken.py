@@ -3,36 +3,52 @@
 enrich_wijken.py
 ----------------
 Enrich CBS Wijk- en Buurtenkaart polygons with climate impact data from the
-Klimaateffectatlas by calculating zonal statistics (mean, max, std, count)
-per neighbourhood or district.
+Klimaateffectatlas by calculating zonal statistics per neighbourhood.
+
+Rasters are passed as ``key=path`` pairs so the key becomes the column prefix:
+
+    --rasters hitte=data/raw/hitte.tif droogte=data/raw/droogte.tif
+
+When no explicit key is provided the prefix is derived from the filename stem.
 
 Usage examples
 --------------
-# Single raster, all municipalities
+# Single raster with auto-derived prefix
 python scripts/enrich_wijken.py \
-    --wijken   data/raw/wijkenbuurten_2023.gpkg \
-    --layer    buurten_2023 \
-    --raster   data/raw/hitte_gevoelstemperatuur.tif \
-    --output   output/buurten_hitte.gpkg
+    --wijken  data/raw/wijkenbuurten_2023.gpkg \
+    --rasters data/raw/hitte_gevoelstemperatuur.tif \
+    --output  output/buurten_hitte.gpkg
 
-# Multiple rasters, filtered to one municipality
+# Multiple rasters with explicit prefixes, filtered to one municipality
 python scripts/enrich_wijken.py \
-    --wijken      data/raw/wijkenbuurten_2023.gpkg \
-    --layer       buurten_2023 \
-    --raster      data/raw/hitte_gevoelstemperatuur.tif data/raw/droogte_neerslagtekort.tif \
-    --gemeente    Amsterdam \
-    --stats       mean max std count \
-    --output      output/amsterdam_klimaat.gpkg
+    --wijken     data/raw/wijkenbuurten_2023.gpkg \
+    --layer      buurten_2023 \
+    --rasters    hitte=data/raw/hitte_gevoelstemperatuur.tif \
+                 droogte=data/raw/droogte_neerslagtekort.tif \
+    --gemeente   Amsterdam \
+    --stats      mean max std count \
+    --threshold  30 \
+    --output     output/amsterdam_klimaat.gpkg
 """
+
+from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
 
 import geopandas as gpd
-import rasterio
 from rasterstats import zonal_stats
+
+# Local helpers — utils.py lives in the same directory
+sys.path.insert(0, str(Path(__file__).parent))
+from utils import (
+    calculate_percentage_above_threshold,
+    normalize_column,
+    reproject_if_needed,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -49,19 +65,33 @@ log = logging.getLogger(__name__)
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_wijken(gpkg_path: Path, layer: str | None, gemeente: str | None) -> gpd.GeoDataFrame:
+def load_wijken(
+    gpkg_path: Path,
+    layer: str | None,
+    gemeente: str | None,
+) -> gpd.GeoDataFrame:
     """Load CBS neighbourhoods from a GeoPackage and optionally filter by municipality.
 
     Parameters
     ----------
-    gpkg_path:  Path to the CBS GeoPackage (.gpkg) or Shapefile (.shp).
-    layer:      Layer name inside the GeoPackage. If None the first layer is used.
-    gemeente:   Municipality name to filter on (GM_NAAM column).
-                Pass None to keep all municipalities.
+    gpkg_path:
+        Path to the CBS GeoPackage (.gpkg) or Shapefile (.shp).
+    layer:
+        Layer name inside the GeoPackage.  When None the first layer is used.
+    gemeente:
+        Municipality name to filter on (GM_NAAM column).
+        Pass None to keep all municipalities.
 
     Returns
     -------
     GeoDataFrame with the selected neighbourhood polygons.
+
+    Raises
+    ------
+    FileNotFoundError
+        When *gpkg_path* does not exist.
+    ValueError
+        When the GM_NAAM column is missing or *gemeente* yields no rows.
     """
     if not gpkg_path.exists():
         raise FileNotFoundError(f"Wijkenbestand niet gevonden: {gpkg_path}")
@@ -74,50 +104,17 @@ def load_wijken(gpkg_path: Path, layer: str | None, gemeente: str | None) -> gpd
         col = "GM_NAAM"
         if col not in gdf.columns:
             raise ValueError(
-                f"Kolom '{col}' niet gevonden. Beschikbare kolommen: {list(gdf.columns)}"
+                f"Kolom '{col}' niet gevonden. "
+                f"Beschikbare kolommen: {list(gdf.columns)}"
             )
-        gdf = gdf[gdf[col].str.strip().str.lower() == gemeente.strip().lower()].copy()
+        mask = gdf[col].str.strip().str.lower() == gemeente.strip().lower()
+        gdf = gdf[mask].copy()
         if gdf.empty:
             raise ValueError(
                 f"Geen rijen gevonden voor gemeente '{gemeente}'. "
-                f"Controleer de schrijfwijze (hoofdlettergevoelig)."
+                "Controleer de schrijfwijze."
             )
         log.info("  Gefilterd op '%s': %d rijen over", gemeente, len(gdf))
-
-    return gdf
-
-
-# ---------------------------------------------------------------------------
-# CRS alignment
-# ---------------------------------------------------------------------------
-
-def align_crs(gdf: gpd.GeoDataFrame, raster_path: Path) -> gpd.GeoDataFrame:
-    """Reproject *gdf* to the CRS of *raster_path* when they differ.
-
-    rasterstats requires vector and raster to share the same CRS.
-
-    Parameters
-    ----------
-    gdf:          Input GeoDataFrame.
-    raster_path:  Path to the reference raster.
-
-    Returns
-    -------
-    GeoDataFrame in the raster CRS (may be the original object if CRS matched).
-    """
-    with rasterio.open(raster_path) as src:
-        raster_crs = src.crs
-
-    if gdf.crs is None:
-        log.warning("Vector heeft geen CRS — neem raster-CRS aan (%s)", raster_crs)
-        gdf = gdf.set_crs(raster_crs)
-    elif gdf.crs != raster_crs:
-        log.info(
-            "Reprojecteer vector van %s naar %s (raster CRS)",
-            gdf.crs.to_string(),
-            raster_crs.to_string(),
-        )
-        gdf = gdf.to_crs(raster_crs)
 
     return gdf
 
@@ -126,52 +123,59 @@ def align_crs(gdf: gpd.GeoDataFrame, raster_path: Path) -> gpd.GeoDataFrame:
 # Zonal statistics
 # ---------------------------------------------------------------------------
 
+AVAILABLE_STATS = [
+    "mean", "max", "min", "std", "count", "sum",
+    "median", "range", "majority", "minority",
+    "variety", "percentile_25", "percentile_75",
+]
+
+
 def compute_zonal_stats(
     gdf: gpd.GeoDataFrame,
     raster_path: Path,
     stats: list[str],
     prefix: str,
 ) -> gpd.GeoDataFrame:
-    """Calculate zonal statistics for every polygon in *gdf* against *raster_path*.
+    """Calculate zonal statistics for every polygon against one raster.
 
     Parameters
     ----------
-    gdf:          GeoDataFrame with polygon geometries (must share CRS with raster).
-    raster_path:  Path to a single-band GeoTIFF.
-    stats:        List of statistics to compute, e.g. ["mean", "max", "std", "count"].
-    prefix:       Column-name prefix, e.g. "hitte" → columns "hitte_mean", "hitte_max".
+    gdf:
+        GeoDataFrame aligned to the raster CRS — call
+        :func:`utils.reproject_if_needed` before passing it here.
+    raster_path:
+        Path to a single-band GeoTIFF.
+    stats:
+        Statistics to compute, e.g. ``["mean", "max", "std", "count"]``.
+    prefix:
+        Column-name prefix.  Each stat becomes ``{prefix}_{stat}``.
 
     Returns
     -------
-    GeoDataFrame with new columns appended for each requested statistic.
+    GeoDataFrame with new columns appended (one per requested statistic).
     """
-    if not raster_path.exists():
-        raise FileNotFoundError(f"Rasterbestand niet gevonden: {raster_path}")
-
     log.info(
-        "Bereken zonal stats [%s] voor %s (prefix='%s')",
+        "Bereken zonal stats [%s] voor %s → prefix '%s'",
         ", ".join(stats),
         raster_path.name,
         prefix,
     )
 
-    # rasterstats expects a list of geometries in WKT or GeoJSON; passing the
-    # GeoDataFrame directly is the most convenient approach.
     results = zonal_stats(
         gdf,
         str(raster_path),
         stats=stats,
-        geojson_out=False,
-        nodata=None,       # honour the raster's own nodata value
-        all_touched=False, # only pixels whose centroid falls inside the polygon
+        nodata=None,      # honour the raster's own nodata value
+        all_touched=False,
     )
 
-    # Attach results as new columns with the given prefix
+    gdf = gdf.copy()
     for stat in stats:
-        col_name = f"{prefix}_{stat}"
-        gdf[col_name] = [row.get(stat) for row in results]
-        log.info("  Kolom toegevoegd: %s", col_name)
+        col = f"{prefix}_{stat}"
+        gdf[col] = [row.get(stat) for row in results]
+        log.debug("  Kolom toegevoegd: %s", col)
 
+    log.info("  %d statistiekkolommen toegevoegd", len(stats))
     return gdf
 
 
@@ -184,8 +188,10 @@ def save_output(gdf: gpd.GeoDataFrame, output_path: Path) -> None:
 
     Parameters
     ----------
-    gdf:          Enriched GeoDataFrame.
-    output_path:  Destination path (must end in .gpkg).
+    gdf:
+        Enriched GeoDataFrame to persist.
+    output_path:
+        Destination path.  The parent directory is created when absent.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     log.info("Schrijf resultaat naar %s", output_path)
@@ -194,8 +200,66 @@ def save_output(gdf: gpd.GeoDataFrame, output_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI
+# Argument parsing helpers
 # ---------------------------------------------------------------------------
+
+def derive_prefix(raster_path: Path) -> str:
+    """Derive a short column prefix from the raster filename stem.
+
+    Strips trailing year tags (``_2023``) and version tags (``_v2``) and
+    truncates to 20 characters so column names stay manageable.
+
+    Examples
+    --------
+    ``hitte_gevoelstemperatuur_2023.tif`` → ``hitte_gevoelstemperatuur``
+    ``droogte_neerslagtekort.tif``        → ``droogte_neerslagtekort``
+    """
+    stem = raster_path.stem
+    stem = re.sub(r"[_-]?(v\d+|\d{4})$", "", stem, flags=re.IGNORECASE)
+    return stem[:20]
+
+
+def parse_raster_args(raw: list[str]) -> dict[str, Path]:
+    """Parse ``--rasters`` values into a ``{prefix: Path}`` mapping.
+
+    Accepts two formats per entry:
+
+    - ``key=path/to/file.tif``  — explicit prefix
+    - ``path/to/file.tif``      — prefix derived from filename
+
+    Parameters
+    ----------
+    raw:
+        List of strings as received from argparse (``nargs="+"``).
+
+    Returns
+    -------
+    Ordered dict mapping each prefix to its raster Path.
+
+    Raises
+    ------
+    ValueError
+        On duplicate prefixes (would cause column name collisions).
+    """
+    mapping: dict[str, Path] = {}
+    for entry in raw:
+        if "=" in entry:
+            key, _, path_str = entry.partition("=")
+            prefix = key.strip()
+            raster_path = Path(path_str.strip())
+        else:
+            raster_path = Path(entry.strip())
+            prefix = derive_prefix(raster_path)
+
+        if prefix in mapping:
+            raise ValueError(
+                f"Dubbel prefix '{prefix}' gedetecteerd. "
+                "Gebruik expliciete sleutels: key=pad.tif."
+            )
+        mapping[prefix] = raster_path
+
+    return mapping
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -223,12 +287,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Laagnaam in het GeoPackage (standaard: eerste laag).",
     )
     parser.add_argument(
-        "--raster",
-        type=Path,
+        "--rasters",
         nargs="+",
         required=True,
-        metavar="TIF",
-        help="Een of meer GeoTIFF-bestanden van de Klimaateffectatlas.",
+        metavar="[KEY=]PAD",
+        help=(
+            "Een of meer rasters als 'key=pad.tif' (expliciete prefix) of "
+            "'pad.tif' (prefix afgeleid van bestandsnaam). "
+            "Voorbeeld: hitte=data/raw/hitte.tif droogte=data/raw/droogte.tif"
+        ),
     )
     parser.add_argument(
         "--gemeente",
@@ -242,11 +309,28 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=["mean", "max", "std", "count"],
         metavar="STAT",
-        choices=["mean", "max", "min", "std", "count", "sum", "median", "range", "majority", "minority", "variety", "percentile_25", "percentile_75"],
+        choices=AVAILABLE_STATS,
         help=(
-            "Te berekenen statistieken (standaard: mean max std count). "
-            "Keuze uit: mean max min std count sum median range majority minority "
-            "variety percentile_25 percentile_75."
+            f"Te berekenen statistieken (standaard: mean max std count). "
+            f"Keuze uit: {', '.join(AVAILABLE_STATS)}."
+        ),
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        metavar="WAARDE",
+        help=(
+            "Bereken ook het percentage pixels boven deze drempelwaarde per raster. "
+            "Voegt een kolom '{prefix}_pct_above_{threshold}' toe."
+        ),
+    )
+    parser.add_argument(
+        "--normalize",
+        action="store_true",
+        help=(
+            "Voeg genormaliseerde versies (0-1) toe van alle mean-kolommen. "
+            "Handig voor het maken van een samengestelde risicoscore."
         ),
     )
     parser.add_argument(
@@ -265,23 +349,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def derive_prefix(raster_path: Path) -> str:
-    """Derive a short column prefix from the raster file stem.
-
-    Strips common suffixes like '_2023', '_v2', etc. and truncates to 20 chars
-    so column names stay manageable.
-
-    Examples
-    --------
-    'hitte_gevoelstemperatuur_2023.tif' → 'hitte_gevoelstemperatuur'
-    'droogte_neerslagtekort.tif'        → 'droogte_neerslagtekort'
-    """
-    import re
-    stem = raster_path.stem
-    # Remove trailing year or version tags
-    stem = re.sub(r"[_-]?(v\d+|\d{4})$", "", stem, flags=re.IGNORECASE)
-    return stem[:20]
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
@@ -291,17 +361,39 @@ def main(argv: list[str] | None = None) -> int:
         logging.getLogger().setLevel(logging.DEBUG)
 
     try:
-        # 1. Load CBS polygons
+        # 1. Parse raster arguments → {prefix: Path}
+        raster_map = parse_raster_args(args.rasters)
+        log.info("Rasters: %s", {k: v.name for k, v in raster_map.items()})
+
+        # 2. Load CBS polygons
         gdf = load_wijken(args.wijken, args.layer, args.gemeente)
 
-        # 2. Process each raster
-        for raster_path in args.raster:
-            prefix = derive_prefix(raster_path)
-            # Reproject vector to raster CRS (in-place for this raster)
-            gdf_aligned = align_crs(gdf, raster_path)
-            gdf = compute_zonal_stats(gdf_aligned, raster_path, args.stats, prefix)
+        # 3. Process each raster
+        for prefix, raster_path in raster_map.items():
+            # Align CRS using the util helper
+            gdf = reproject_if_needed(gdf, raster_path)
 
-        # 3. Save enriched result
+            # Standard zonal statistics
+            gdf = compute_zonal_stats(gdf, raster_path, args.stats, prefix)
+
+            # Optional threshold percentage
+            if args.threshold is not None:
+                log.info(
+                    "Bereken percentage boven drempel %.2f voor '%s'",
+                    args.threshold,
+                    prefix,
+                )
+                gdf = calculate_percentage_above_threshold(
+                    gdf, raster_path, args.threshold, prefix
+                )
+
+            # Optional min-max normalisation of the mean column
+            if args.normalize and f"{prefix}_mean" in gdf.columns:
+                col = f"{prefix}_mean"
+                gdf[f"{col}_norm"] = normalize_column(gdf, col)
+                log.info("  Genormaliseerde kolom toegevoegd: %s_norm", col)
+
+        # 4. Save result
         save_output(gdf, args.output)
 
     except FileNotFoundError as exc:
