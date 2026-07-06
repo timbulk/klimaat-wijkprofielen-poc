@@ -2,8 +2,8 @@
 # klimaat-wijkprofielen-poc  —  default configuration
 # =============================================================================
 # All paths are relative to the project root (where this file lives).
-# Override any value with a CLI argument; config values serve as defaults.
-# Duplicate this file as config.local.yaml (git-ignored) for personal overrides.
+# CLI arguments always override these values.
+# Tip: copy to config.local.yaml (git-ignored) for personal overrides.
 
 # -----------------------------------------------------------------------------
 # Input: CBS Wijk- en Buurtenkaart
@@ -13,10 +13,11 @@ cbs_path: data/raw/wijkenbuurten_2023.gpkg
 cbs_layer: buurten_2023          # layer inside the GeoPackage; null = first layer
 
 # -----------------------------------------------------------------------------
-# Input: Klimaateffectatlas rasters
-# Each entry is  prefix: relative/path/to/file.tif
+# Input: Klimaateffectatlas — local rasters
+# Each entry:  prefix: relative/path/to/file.tif
 # The prefix becomes the column-name prefix in the output (e.g. hitte_mean).
 # Download GeoTIFFs from: https://www.klimaateffectatlas.nl
+# Comment out entries you haven't downloaded yet.
 # -----------------------------------------------------------------------------
 rasters:
   hitte:    data/raw/hitte_gevoelstemperatuur.tif
@@ -24,13 +25,29 @@ rasters:
   # wateroverlast: data/raw/wateroverlast_overstroming.tif
 
 # -----------------------------------------------------------------------------
+# Input: Klimaateffectatlas — WMS (live download, no local file needed)
+# Set wms_layer to a layer name to enable WMS download.
+# Set to null to disable WMS and use only local rasters.
+#
+# Available layers can be listed with:
+#   python -c "
+#     from scripts.wms_utils import connect_wms, DEFAULT_WMS_URL
+#     wms = connect_wms(DEFAULT_WMS_URL)
+#     print('\n'.join(wms.contents.keys()))
+#   "
+# -----------------------------------------------------------------------------
+wms_layer: hitteeiland_r_hitte   # set to null to disable
+wms_url: https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_public/wms
+# wms_resolution: 10             # metres per pixel (default: 10)
+
+# -----------------------------------------------------------------------------
 # Filter
-# Set to null to process all municipalities in the dataset.
+# Set to null to process all municipalities.
 # -----------------------------------------------------------------------------
 gemeente: Eindhoven              # e.g. Utrecht, Haarlem, Tilburg, Breda — or null
 
 # -----------------------------------------------------------------------------
-# Zonal statistics to calculate
+# Zonal statistics
 # Choices: mean max min std count sum median range
 #          majority minority variety percentile_25 percentile_75
 # -----------------------------------------------------------------------------
@@ -42,15 +59,12 @@ stats:
 
 # -----------------------------------------------------------------------------
 # Threshold
-# Pixels with value > threshold are counted; result stored as
-# {prefix}_pct_above_{threshold} column.
-# Set to null to skip threshold calculation.
+# Pixels with value > threshold counted as percentage per polygon.
+# Set to null to skip.
 # -----------------------------------------------------------------------------
 threshold: 30.0
 
 # -----------------------------------------------------------------------------
-# Output
-# Enriched GeoPackages are written to this directory.
-# The filename is derived from the municipality name (or "all" when unfiltered).
+# Output directory (GeoPackage filename is derived from gemeente name)
 # -----------------------------------------------------------------------------
 output_dir: output
