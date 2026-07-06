@@ -171,42 +171,113 @@ def style_summary_table(df: pd.DataFrame) -> pd.DataFrame:
     return display
 
 
-def make_choropleth(gdf: gpd.GeoDataFrame, column: str) -> object:
-    """Create a Folium choropleth map for *column*."""
+# Qualitative palette for categorical columns (e.g. wijktype_definitief)
+_CAT_COLORS = [
+    "#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
+    "#a65628", "#f781bf", "#999999", "#66c2a5", "#fc8d62",
+    "#8da0cb", "#e78ac3", "#a6d854", "#ffd92f", "#e5c494",
+    "#b3b3b3", "#1b9e77", "#d95f02", "#7570b3", "#e7298a",
+]
+
+
+def make_choropleth(
+    gdf,
+    column: str,
+    tooltip_extra=None,
+    wms_overlays=None,
+    wms_url=None,
+):
+    """Create a Folium choropleth map for *column*.
+
+    Parameters
+    ----------
+    column:        Column to visualise (numeric or categorical).
+    tooltip_extra: Additional columns shown in the hover tooltip.
+    wms_overlays:  Dict {label: wms_layer_name} added as toggleable WMS overlays.
+    wms_url:       Base WMS endpoint URL for overlays.
+    """
     import folium
     from folium.plugins import Fullscreen
 
     gdf_wgs = gdf.to_crs("EPSG:4326")
-    bounds  = gdf_wgs.total_bounds  # [minx, miny, maxx, maxy]
+    bounds  = gdf_wgs.total_bounds
     center  = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
 
     m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
     Fullscreen().add_to(m)
 
-    # Choropleth layer
-    folium.Choropleth(
-        geo_data=gdf_wgs.__geo_interface__,
-        data=gdf_wgs[[column]].reset_index(),
-        columns=["index", column],
-        key_on="feature.id",
-        fill_color="YlOrRd",
-        fill_opacity=0.7,
-        line_opacity=0.3,
-        nan_fill_color="#cccccc",
-        legend_name=column,
-    ).add_to(m)
+    is_cat = gdf_wgs[column].dtype == object or str(gdf_wgs[column].dtype) == "category"
+    extra      = [c for c in (tooltip_extra or []) if c in gdf_wgs.columns and c != column]
+    tip_fields = [column] + extra
 
-    # Tooltip on hover
-    folium.GeoJson(
-        gdf_wgs,
-        tooltip=folium.GeoJsonTooltip(
-            fields=[column],
-            aliases=[column],
-            localize=True,
-        ),
-        style_function=lambda _: {"fillOpacity": 0, "weight": 0},
-    ).add_to(m)
+    if is_cat:
+        cats      = sorted(gdf_wgs[column].dropna().unique().tolist())
+        color_map = {c: _CAT_COLORS[i % len(_CAT_COLORS)] for i, c in enumerate(cats)}
 
+        def _style(feature, _cm=color_map):
+            return {
+                "fillColor":   _cm.get(feature["properties"].get(column), "#cccccc"),
+                "fillOpacity": 0.7,
+                "color":       "white",
+                "weight":      0.5,
+            }
+
+        folium.GeoJson(
+            gdf_wgs,
+            name=column,
+            style_function=_style,
+            tooltip=folium.GeoJsonTooltip(fields=tip_fields, aliases=tip_fields, localize=True),
+        ).add_to(m)
+
+        legend = (
+            "<div style='position:fixed;bottom:30px;left:30px;z-index:1000;background:white;"
+            "padding:10px 14px;border-radius:6px;font-size:12px;max-height:220px;"
+            "overflow-y:auto;box-shadow:2px 2px 6px rgba(0,0,0,.3)'>"
+            f"<b>{column}</b><br>"
+        )
+        for cat in cats[:18]:
+            legend += (
+                f"<span style='background:{color_map[cat]};display:inline-block;"
+                f"width:12px;height:12px;margin-right:5px;border-radius:2px'></span>{cat}<br>"
+            )
+        if len(cats) > 18:
+            legend += f"<i>... en {len(cats)-18} meer</i>"
+        legend += "</div>"
+        m.get_root().html.add_child(folium.Element(legend))
+
+    else:
+        folium.Choropleth(
+            geo_data=gdf_wgs.__geo_interface__,
+            data=gdf_wgs[[column]].reset_index(),
+            columns=["index", column],
+            key_on="feature.id",
+            fill_color="YlOrRd",
+            fill_opacity=0.7,
+            line_opacity=0.3,
+            nan_fill_color="#cccccc",
+            legend_name=column,
+            name=column,
+        ).add_to(m)
+        folium.GeoJson(
+            gdf_wgs,
+            name=f"{column} tooltip",
+            tooltip=folium.GeoJsonTooltip(fields=tip_fields, aliases=tip_fields, localize=True),
+            style_function=lambda _: {"fillOpacity": 0, "weight": 0},
+        ).add_to(m)
+
+    if wms_overlays and wms_url:
+        for label, layer_name in wms_overlays.items():
+            folium.WmsTileLayer(
+                url=wms_url,
+                layers=layer_name,
+                fmt="image/png",
+                transparent=True,
+                name=f"WMS: {label}",
+                opacity=0.55,
+                show=False,
+            ).add_to(m)
+
+    folium.LayerControl(collapsed=False).add_to(m)
     m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
     return m
 
@@ -532,14 +603,31 @@ if _prev_gdf is not None:
         )
 
     # Kaart
-    st.subheader("🗺️ Kaart")
-    _map_opts = _stat_cols + _thresh_cols + _norm_cols
+    st.subheader("\U0001f5fa\ufe0f Kaart")
+    _map_opts = _wt_col + _stat_cols + _thresh_cols + _norm_cols
     if _map_opts:
         _map_col = st.selectbox("Toon op kaart", _map_opts, index=0, key="map_col_select")
+        _tooltip_extra = [c for c in ["wijktype_definitief"] if c in _prev_gdf.columns and c != _map_col]
+        _prev_wms  = st.session_state.get("wms_layers", {})
+        _show_wms  = False
+        if _prev_wms:
+            _show_wms = st.checkbox(
+                "WMS-lagen als overlay tonen",
+                value=False,
+                help="Voegt de geanalyseerde WMS-lagen toe als transparante overlay. Gebruik de laagbeheerder rechts van de kaart om lagen aan/uit te zetten.",
+                key="show_wms_overlay",
+            )
         try:
             import streamlit_folium as stf
-            stf.st_folium(make_choropleth(_prev_gdf, _map_col),
-                          use_container_width=True, height=500)
+            stf.st_folium(
+                make_choropleth(
+                    _prev_gdf, _map_col,
+                    tooltip_extra=_tooltip_extra,
+                    wms_overlays=_prev_wms if _show_wms else None,
+                    wms_url=WMS_URL,
+                ),
+                use_container_width=True, height=520,
+            )
         except ImportError:
             import matplotlib.pyplot as plt
             _fig, _ax = plt.subplots(figsize=(10, 8))
@@ -547,10 +635,10 @@ if _prev_gdf is not None:
                 column=_map_col, ax=_ax, legend=True, cmap="YlOrRd",
                 missing_kwds={"color": "#cccccc", "label": "geen data"},
             )
-            _ax.set_title(f"{_map_col} — {_prev_gem}", fontsize=13)
+            _ax.set_title(f"{_map_col} \u2014 {_prev_gem}", fontsize=13)
             _ax.set_axis_off()
             st.pyplot(_fig)
-            st.caption("💡 `pip install streamlit-folium folium` voor interactieve kaart")
+            st.caption("\U0001f4a1 `pip install streamlit-folium folium` voor interactieve kaart")
 
     st.divider()
     st.caption(
@@ -677,6 +765,7 @@ try:
     st.session_state["original_cols"] = original_cols
     st.session_state["gemeente"]      = gemeente
     st.session_state["prefix"]        = [v[:20] for v in wms_layers_selected.values()] if use_wms else [raster_prefix]
+    st.session_state["wms_layers"]      = wms_layers_selected if use_wms else {}
     st.session_state["gpkg_bytes"]    = gdf_to_gpkg_bytes(gdf)
     st.session_state["gpkg_filename"] = f"{slug}_klimaat.gpkg"
 
