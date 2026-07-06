@@ -507,9 +507,9 @@ if _prev_gdf is not None:
         )
 
     # Wijktype verdeling
-    if "wijktype" in _prev_gdf.columns:
+    if "wijktype_definitief" in _prev_gdf.columns:
         with st.expander("🏘️ Wijktype verdeling", expanded=False):
-            _wt_counts = _prev_gdf["wijktype"].value_counts().reset_index()
+            _wt_counts = _prev_gdf["wijktype_definitief"].value_counts().reset_index()
             _wt_counts.columns = ["Wijktype", "Aantal buurten"]
             st.dataframe(_wt_counts, use_container_width=True, hide_index=True)
 
@@ -660,7 +660,7 @@ try:
         try:
             from wijktypen import join_wijktypen
             gdf = join_wijktypen(gdf)
-            n_filled = gdf["wijktype"].notna().sum()
+            n_filled = gdf["wijktype_definitief"].notna().sum()
             status.info(f"✅ Wijktype toegewezen aan {n_filled}/{len(gdf)} buurten")
         except Exception as exc:
             st.warning(
