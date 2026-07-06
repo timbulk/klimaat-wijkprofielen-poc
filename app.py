@@ -246,9 +246,11 @@ def make_choropleth(
         m.get_root().html.add_child(folium.Element(legend))
 
     else:
+        _plot_data = gdf_wgs[[column]].reset_index()
+        _plot_data[column] = pd.to_numeric(_plot_data[column], errors="coerce")
         folium.Choropleth(
             geo_data=gdf_wgs.__geo_interface__,
-            data=gdf_wgs[[column]].reset_index(),
+            data=_plot_data,
             columns=["index", column],
             key_on="feature.id",
             fill_color="YlOrRd",
