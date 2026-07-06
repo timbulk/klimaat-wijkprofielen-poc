@@ -6,3 +6,5 @@ fiona
 pyogrio
 matplotlib
 PyYAML
+OWSLib
+Pillow
