@@ -432,11 +432,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wms_group.add_argument(
         "--wms-resolution",
-        type=float,
-        default=DEFAULT_RESOLUTION_M,
+        type=int,
+        default=50,
         metavar="METER",
         dest="wms_resolution",
-        help="Pixelgrootte in meters voor WMS-download (standaard: 10).",
+        help="Pixelgrootte in meters voor WMS-download (standaard: 50).",
+    )
+    wms_group.add_argument(
+        "--wms-buffer",
+        type=int,
+        default=500,
+        metavar="METER",
+        dest="wms_buffer",
+        help="Buffer in meters rondom de gemeente-bbox (standaard: 500).",
     )
 
     # Filter & stats
