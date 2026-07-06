@@ -1,5 +1,4 @@
-"""
-app.py
+﻿app.py
 ------
 Streamlit web interface for the klimaat-wijkprofielen-poc pipeline.
 
@@ -24,11 +23,11 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 
 # ---------------------------------------------------------------------------
-# Page config — must be the very first Streamlit call
+# Page config â€” must be the very first Streamlit call
 # ---------------------------------------------------------------------------
 st.set_page_config(
     page_title="Klimaat Wijkprofielen",
-    page_icon="🌡️",
+    page_icon="ðŸŒ¡ï¸",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -41,13 +40,13 @@ PROJECT_ROOT = Path(__file__).parent
 
 WMS_URL = "https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_public/wms"
 
-# Fallback layer list — shown when the WMS is unreachable on first load
+# Fallback layer list â€” shown when the WMS is unreachable on first load
 WMS_LAYERS_FALLBACK = {
     "Hitte-eiland (gevoelstemperatuur)":  "hitteeiland_r_hitte",
     "Waterdiepte neerslag 140 mm/2 uur":  "waterdiepte_neerslag_140mm_2uur",
     "Waterdiepte neerslag 70 mm/1 uur":   "waterdiepte_neerslag_70mm_1uur",
-    "Droogte — neerslagtekort":           "droogte_r_neerslagtekort",
-    "Hitte — gevoelstemperatuur dag":     "hitteeiland_r_hitte_dag",
+    "Droogte â€” neerslagtekort":           "droogte_r_neerslagtekort",
+    "Hitte â€” gevoelstemperatuur dag":     "hitteeiland_r_hitte_dag",
     "Stedelijke hitte (LST)":             "hitteeiland_r_lst",
 }
 
@@ -223,11 +222,11 @@ with st.sidebar:
         width=180,
     )
     st.title("Klimaat Wijkprofielen")
-    st.caption("Proof of concept — CBS × Klimaateffectatlas")
+    st.caption("Proof of concept â€” CBS Ã— Klimaateffectatlas")
     st.divider()
 
-    # ── CBS bestand ──────────────────────────────────────────────────────────
-    st.subheader("📂 CBS data")
+    # â”€â”€ CBS bestand â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ“‚ CBS data")
     cbs_path_input = st.text_input(
         "GeoPackage pad",
         value=cfg.get("cbs_path", "data/raw/wijkenbuurten_2023.gpkg"),
@@ -236,7 +235,7 @@ with st.sidebar:
 
     cbs_full_path = PROJECT_ROOT / cbs_path_input
 
-    # Lees beschikbare lagen uit het GeoPackage — geen handmatig typen meer
+    # Lees beschikbare lagen uit het GeoPackage â€” geen handmatig typen meer
     available_layers = list_gpkg_layers(str(cbs_full_path))
 
     if available_layers:
@@ -252,17 +251,17 @@ with st.sidebar:
             help=f"{len(available_layers)} lagen gevonden in het GeoPackage.",
         )
     else:
-        # Bestand nog niet aanwezig — val terug op tekstinvoer
+        # Bestand nog niet aanwezig â€” val terug op tekstinvoer
         cbs_layer_input = st.text_input(
             "Laagnaam (handmatig)",
             value=cfg.get("cbs_layer") or "buurten_2023",
-            help="GeoPackage niet gevonden — voer de laagnaam handmatig in.",
+            help="GeoPackage niet gevonden â€” voer de laagnaam handmatig in.",
         )
         if cbs_full_path.exists() is False:
-            st.warning(f"⚠️ Bestand niet gevonden:\n`{cbs_path_input}`", icon="⚠️")
+            st.warning(f"âš ï¸ Bestand niet gevonden:\n`{cbs_path_input}`", icon="âš ï¸")
 
-    # ── Gemeente ─────────────────────────────────────────────────────────────
-    st.subheader("🏙️ Gemeente")
+    # â”€â”€ Gemeente â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ™ï¸ Gemeente")
 
     gemeenten = load_cbs_gemeenten(str(cbs_full_path), cbs_layer_input)
     default_gemeente = cfg.get("gemeente", "Eindhoven")
@@ -274,15 +273,15 @@ with st.sidebar:
         gemeente = st.text_input(
             "Gemeente (handmatig invoeren)",
             value=default_gemeente,
-            help="CBS-bestand niet gevonden — voer de naam handmatig in.",
+            help="CBS-bestand niet gevonden â€” voer de naam handmatig in.",
         )
         if not cbs_full_path.exists():
-            st.warning(f"⚠️ CBS-bestand niet gevonden:\n`{cbs_path_input}`")
+            st.warning(f"âš ï¸ CBS-bestand niet gevonden:\n`{cbs_path_input}`")
 
     st.divider()
 
-    # ── Bestaand GeoPackage inlezen ───────────────────────────────────────────
-    st.subheader("📦 Bestaand GeoPackage")
+    # â”€â”€ Bestaand GeoPackage inlezen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ“¦ Bestaand GeoPackage")
     existing_gpkg = st.text_input(
         "Pad naar bestaand output GeoPackage (optioneel)",
         value="",
@@ -298,7 +297,7 @@ with st.sidebar:
         )
         if existing_info:
             st.success(
-                f"✅ {existing_info['n_rows']} features · "
+                f"âœ… {existing_info['n_rows']} features Â· "
                 f"{len(existing_info['stat_columns'])} stat-kolommen"
             )
             if existing_info["prefixes"]:
@@ -311,8 +310,8 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Databron ─────────────────────────────────────────────────────────────
-    st.subheader("🛰️ Databron")
+    # â”€â”€ Databron â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ›°ï¸ Databron")
     source_mode = st.radio(
         "Kies databron",
         ["WMS (live download)", "Lokaal raster (.tif)"],
@@ -325,11 +324,11 @@ with st.sidebar:
     local_raster_path = None
 
     if use_wms:
-        with st.spinner("WMS-lagen ophalen…"):
+        with st.spinner("WMS-lagen ophalenâ€¦"):
             available_layers = fetch_wms_layers(WMS_URL)
 
         if available_layers is WMS_LAYERS_FALLBACK:
-            st.warning("⚠️ WMS niet bereikbaar — vaste lijst wordt getoond.", icon="⚠️")
+            st.warning("âš ï¸ WMS niet bereikbaar â€” vaste lijst wordt getoond.", icon="âš ï¸")
 
         # Pre-select the default layer from config if it exists in the list
         default_layer_name = cfg.get("wms_layer", "hitteeiland_r_hitte")
@@ -348,7 +347,7 @@ with st.sidebar:
             "WMS-lagen (meerdere mogelijk)",
             layer_labels,
             default=default_selection,
-            help=f"{len(available_layers)} lagen beschikbaar. Selecteer één of meer lagen — elke laag krijgt eigen kolommen in de output.",
+            help=f"{len(available_layers)} lagen beschikbaar. Selecteer Ã©Ã©n of meer lagen â€” elke laag krijgt eigen kolommen in de output.",
         )
         # Maak een dict van geselecteerde {label: layer_name}
         wms_layers_selected = {label: available_layers[label] for label in wms_labels}
@@ -362,11 +361,11 @@ with st.sidebar:
                     existing_info.get("prefixes") and
                     prefix in existing_info["prefixes"]
                 )
-                marker = " ⚠️ _al aanwezig_" if already else ""
+                marker = " âš ï¸ _al aanwezig_" if already else ""
                 captions.append(f"`{prefix}`{marker}")
-            st.caption("Prefixen in output: " + "  ·  ".join(captions))
+            st.caption("Prefixen in output: " + "  Â·  ".join(captions))
         else:
-            st.warning("Selecteer minimaal één WMS-laag.", icon="⚠️")
+            st.warning("Selecteer minimaal Ã©Ã©n WMS-laag.", icon="âš ï¸")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -389,15 +388,15 @@ with st.sidebar:
         raster_prefix = st.text_input(
             "Kolomprefix",
             value="hitte",
-            help="Wordt prefix van de nieuwe kolommen, bijv. 'hitte' → 'hitte_mean'.",
+            help="Wordt prefix van de nieuwe kolommen, bijv. 'hitte' â†’ 'hitte_mean'.",
         )
         wms_resolution = 50
         wms_buffer     = 500
 
     st.divider()
 
-    # ── Statistieken ─────────────────────────────────────────────────────────
-    st.subheader("📊 Statistieken")
+    # â”€â”€ Statistieken â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ“Š Statistieken")
     selected_stats = st.multiselect(
         "Te berekenen statistieken",
         STATS_OPTIONS,
@@ -414,15 +413,15 @@ with st.sidebar:
         )
 
     normalize = st.checkbox(
-        "Normaliseer mean-kolommen (0–1)",
+        "Normaliseer mean-kolommen (0â€“1)",
         value=False,
         help="Handig voor het vergelijken van lagen met verschillende eenheden.",
     )
 
     st.divider()
 
-    # ── Wijktypen ─────────────────────────────────────────────────────────────
-    st.subheader("🏘️ Wijktypen")
+    # â”€â”€ Wijktypen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    st.subheader("ðŸ˜ï¸ Wijktypen")
     use_wijktypen = st.checkbox(
         "Wijktype toevoegen als kolom",
         value=True,
@@ -435,10 +434,10 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Run-knop ─────────────────────────────────────────────────────────────
+    # â”€â”€ Run-knop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     _no_layers = use_wms and not wms_layers_selected
     run_button = st.button(
-        "▶️ Run Analyse",
+        "â–¶ï¸ Run Analyse",
         type="primary",
         use_container_width=True,
         disabled=(not gemeente or _no_layers),
@@ -454,15 +453,15 @@ with st.sidebar:
 #   4. Pipeline (alleen bereikbaar als run_button == True)
 # ---------------------------------------------------------------------------
 
-st.title("🌡️ Klimaat Wijkprofielen POC")
+st.title("ðŸŒ¡ï¸ Klimaat Wijkprofielen POC")
 st.markdown(
     "Verrijk CBS buurten met klimaatdata uit de Klimaateffectatlas via **zonal statistics**."
 )
 
 # ---------------------------------------------------------------------------
-# Stap 1 — Toon resultaten van een eerdere run (altijd, boven de stop-guard)
+# Stap 1 â€” Toon resultaten van een eerdere run (altijd, boven de stop-guard)
 # ---------------------------------------------------------------------------
-# Door de resultaten vóór de st.stop() te renderen blijven ze zichtbaar
+# Door de resultaten vÃ³Ã³r de st.stop() te renderen blijven ze zichtbaar
 # bij elke re-render (scrollen, sidebar-interactie, kaart-interactie).
 
 _prev_gdf   = st.session_state.get("gdf")
@@ -471,12 +470,13 @@ _prev_gem   = st.session_state.get("gemeente", "")
 
 if _prev_gdf is not None:
     _added      = [c for c in _prev_gdf.columns if c not in _prev_cols and c != "geometry"]
-    _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c]
+    _wt_cols    = [c for c in _added if c.startswith("wijktype")]
+    _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c and not c.startswith("wijktype")]
     _thresh_cols= [c for c in _added if "pct_above" in c]
     _norm_cols  = [c for c in _added if c.endswith("_norm")]
 
     st.divider()
-    st.subheader(f"📋 Resultaten — {_prev_gem}")
+    st.subheader(f"ðŸ“‹ Resultaten â€” {_prev_gem}")
 
     # KPI metrics
     _kpi_cols = st.columns(min(4, len(_stat_cols)) or 1)
@@ -484,15 +484,15 @@ if _prev_gdf is not None:
         with _kpi_cols[_i % len(_kpi_cols)]:
             _val  = _prev_gdf[_col].mean()
             _vmax = _prev_gdf[_col].max()
-            st.metric(_col, f"{_val:.2f}" if _val is not None else "—",
+            st.metric(_col, f"{_val:.2f}" if _val is not None else "â€”",
                       delta=f"max {_vmax:.2f}", delta_color="off")
 
-    # Download-knop — leest altijd uit session_state, nooit opnieuw berekend
+    # Download-knop â€” leest altijd uit session_state, nooit opnieuw berekend
     st.divider()
     _col_dl, _col_info = st.columns([1, 3])
     with _col_dl:
         st.download_button(
-            label="⬇️ Download GeoPackage",
+            label="â¬‡ï¸ Download GeoPackage",
             data=st.session_state["gpkg_bytes"],
             file_name=st.session_state["gpkg_filename"],
             mime="application/geopackage+sqlite3",
@@ -501,25 +501,21 @@ if _prev_gdf is not None:
         )
     with _col_info:
         st.caption(
-            f"**{len(_prev_gdf)}** buurten · **{len(_added)}** nieuwe kolommen · "
-            f"CRS: {_prev_gdf.crs.to_string() if _prev_gdf.crs else '—'}"
+            f"**{len(_prev_gdf)}** buurten Â· **{len(_added)}** nieuwe kolommen Â· "
+            f"CRS: {_prev_gdf.crs.to_string() if _prev_gdf.crs else 'â€”'}"
         )
 
     # Wijktype verdeling
     if "wijktype" in _prev_gdf.columns:
-        with st.expander("🏘️ Wijktype verdeling", expanded=False):
-            _wt_counts = (
-                _prev_gdf["wijktype"]
-                .value_counts()
-                .reset_index()
-                .rename(columns={"index": "Wijktype", "wijktype": "Aantal buurten"})
-            )
+        with st.expander("ðŸ˜ï¸ Wijktype verdeling", expanded=False):
+            _wt_counts = _prev_gdf["wijktype"].value_counts().reset_index()
+            _wt_counts.columns = ["Wijktype", "Aantal buurten"]
             st.dataframe(_wt_counts, use_container_width=True, hide_index=True)
 
     # Tabel
-    st.subheader("📊 Statistieken per buurt")
+    st.subheader("ðŸ“Š Statistieken per buurt")
     _name_col = next((c for c in ("buurtnaam", "BU_NAAM", "wijknaam", "WK_NAAM") if c in _prev_gdf.columns), None)
-    _wt_col   = ["wijktype"] if "wijktype" in _prev_gdf.columns else []
+    _wt_col   = _wt_cols  # already computed above, avoids duplicate columns
     _disp_cols = ([_name_col] if _name_col else []) + _wt_col + _stat_cols + _thresh_cols + _norm_cols
     if _disp_cols:
         _df_disp = style_summary_table(_prev_gdf[_disp_cols])
@@ -535,7 +531,7 @@ if _prev_gdf is not None:
         )
 
     # Kaart
-    st.subheader("🗺️ Kaart")
+    st.subheader("ðŸ—ºï¸ Kaart")
     _map_opts = _stat_cols + _thresh_cols + _norm_cols
     if _map_opts:
         _map_col = st.selectbox("Toon op kaart", _map_opts, index=0, key="map_col_select")
@@ -550,47 +546,47 @@ if _prev_gdf is not None:
                 column=_map_col, ax=_ax, legend=True, cmap="YlOrRd",
                 missing_kwds={"color": "#cccccc", "label": "geen data"},
             )
-            _ax.set_title(f"{_map_col} — {_prev_gem}", fontsize=13)
+            _ax.set_title(f"{_map_col} â€” {_prev_gem}", fontsize=13)
             _ax.set_axis_off()
             st.pyplot(_fig)
-            st.caption("💡 `pip install streamlit-folium folium` voor interactieve kaart")
+            st.caption("ðŸ’¡ `pip install streamlit-folium folium` voor interactieve kaart")
 
     st.divider()
     st.caption(
-        "klimaat-wijkprofielen-poc · "
+        "klimaat-wijkprofielen-poc Â· "
         "Data: [CBS](https://www.pdok.nl) & "
-        "[Klimaateffectatlas](https://www.klimaateffectatlas.nl) · "
+        "[Klimaateffectatlas](https://www.klimaateffectatlas.nl) Â· "
         "Gebouwd met Streamlit"
     )
 
 # ---------------------------------------------------------------------------
-# Stap 2 — Stop hier als de Run-knop NIET ingedrukt is
+# Stap 2 â€” Stop hier als de Run-knop NIET ingedrukt is
 # ---------------------------------------------------------------------------
 # Alles hierboven (resultaten) is al gerenderd. st.stop() voorkomt dat
 # de pipeline-code hieronder bij elke re-render wordt uitgevoerd.
 
 if not run_button:
     if _prev_gdf is None:
-        # Nog geen resultaten — toon landing
+        # Nog geen resultaten â€” toon landing
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Databron", "WMS" if use_wms else "Lokaal .tif")
-        col_b.metric("Gemeente", gemeente or "—")
-        col_c.metric("Statistieken", ", ".join(selected_stats) if selected_stats else "—")
+        col_b.metric("Gemeente", gemeente or "â€”")
+        col_c.metric("Statistieken", ", ".join(selected_stats) if selected_stats else "â€”")
         st.info(
-            "👈 Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
-            icon="ℹ️",
+            "ðŸ‘ˆ Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
+            icon="â„¹ï¸",
         )
-    st.stop()  # stop altijd — pipeline mag nooit ongewild draaien
+    st.stop()  # stop altijd â€” pipeline mag nooit ongewild draaien
 
 # ---------------------------------------------------------------------------
-# Stap 3 — Pipeline (alleen bereikbaar als run_button == True)
+# Stap 3 â€” Pipeline (alleen bereikbaar als run_button == True)
 # ---------------------------------------------------------------------------
 
 if not selected_stats:
-    st.error("Selecteer minimaal één statistiek.")
+    st.error("Selecteer minimaal Ã©Ã©n statistiek.")
     st.stop()
 
-progress = st.progress(0, text="Opstarten…")
+progress = st.progress(0, text="Opstartenâ€¦")
 status   = st.empty()
 
 try:
@@ -599,8 +595,8 @@ try:
     from wms_utils import TempRaster, download_wms_as_geotiff
 
     # Stap 1: CBS laden
-    status.info("📂 CBS data laden…")
-    progress.progress(10, text="CBS laden…")
+    status.info("ðŸ“‚ CBS data ladenâ€¦")
+    progress.progress(10, text="CBS ladenâ€¦")
 
     cbs_full = PROJECT_ROOT / cbs_path_input
     if not cbs_full.exists():
@@ -610,8 +606,8 @@ try:
     gdf = load_wijken(cbs_full, cbs_layer_input or None, gemeente)
     original_cols = set(gdf.columns)
 
-    progress.progress(30, text=f"{len(gdf)} buurten geladen…")
-    status.info(f"✅ {len(gdf)} buurten geladen voor **{gemeente}**")
+    progress.progress(30, text=f"{len(gdf)} buurten geladenâ€¦")
+    status.info(f"âœ… {len(gdf)} buurten geladen voor **{gemeente}**")
     time.sleep(0.3)
 
     # Stap 2: Raster verwerken
@@ -624,9 +620,9 @@ try:
         for idx, (wms_label, wms_layer_name) in enumerate(wms_layers_selected.items()):
             prog_now = prog_start + idx * prog_step
             status.info(
-                f"🛰️ ({idx + 1}/{n_layers}) Downloaden: `{wms_layer_name}`…"
+                f"ðŸ›°ï¸ ({idx + 1}/{n_layers}) Downloaden: `{wms_layer_name}`â€¦"
             )
-            progress.progress(prog_now, text=f"WMS laag {idx + 1}/{n_layers}…")
+            progress.progress(prog_now, text=f"WMS laag {idx + 1}/{n_layers}â€¦")
 
             with TempRaster(suffix=f"_{wms_layer_name}.tif") as tmp_path:
                 download_wms_as_geotiff(
@@ -638,8 +634,8 @@ try:
                     output_path=tmp_path,
                 )
                 progress.progress(prog_now + prog_step // 2,
-                                  text=f"Zonal stats laag {idx + 1}/{n_layers}…")
-                status.info(f"📐 ({idx + 1}/{n_layers}) Zonal statistics: `{wms_layer_name}`…")
+                                  text=f"Zonal stats laag {idx + 1}/{n_layers}â€¦")
+                status.info(f"ðŸ“ ({idx + 1}/{n_layers}) Zonal statistics: `{wms_layer_name}`â€¦")
                 # Gebruik de laagnaam als prefix (max 20 tekens)
                 prefix = wms_layer_name[:20]
                 gdf = _enrich_from_raster(
@@ -650,31 +646,31 @@ try:
         if not local_path.exists():
             st.error(f"Rasterbestand niet gevonden: `{local_raster_path}`")
             st.stop()
-        progress.progress(50, text="Zonal statistics berekenen…")
-        status.info("📐 Zonal statistics berekenen…")
+        progress.progress(50, text="Zonal statistics berekenenâ€¦")
+        status.info("ðŸ“ Zonal statistics berekenenâ€¦")
         gdf = _enrich_from_raster(
             gdf, local_path, raster_prefix, selected_stats, threshold, normalize,
         )
 
     # Stap 3: Wijktypen toevoegen via WFS ruimtelijke join
     if use_wijktypen:
-        progress.progress(88, text="Wijktypen ophalen via WFS…")
-        status.info("🏘️ Wijktypen ophalen via WFS…")
+        progress.progress(88, text="Wijktypen ophalen via WFSâ€¦")
+        status.info("ðŸ˜ï¸ Wijktypen ophalen via WFSâ€¦")
         try:
             from wijktypen import join_wijktypen
             gdf = join_wijktypen(gdf)
             n_filled = gdf["wijktype"].notna().sum()
-            status.info(f"✅ Wijktype toegewezen aan {n_filled}/{len(gdf)} buurten")
+            status.info(f"âœ… Wijktype toegewezen aan {n_filled}/{len(gdf)} buurten")
         except Exception as exc:
             st.warning(
-                f"⚠️ Wijktypen niet beschikbaar: {exc}\n"
-                "De overige resultaten worden wél opgeslagen.",
-                icon="⚠️",
+                f"âš ï¸ Wijktypen niet beschikbaar: {exc}\n"
+                "De overige resultaten worden wÃ©l opgeslagen.",
+                icon="âš ï¸",
             )
 
-    progress.progress(90, text="Resultaten opslaan…")
+    progress.progress(90, text="Resultaten opslaanâ€¦")
 
-    # Opslaan in session_state — resultaten worden getoond bij volgende render
+    # Opslaan in session_state â€” resultaten worden getoond bij volgende render
     slug = gemeente.lower().replace(" ", "_")
     st.session_state["gdf"]           = gdf
     st.session_state["original_cols"] = original_cols
@@ -684,7 +680,7 @@ try:
     st.session_state["gpkg_filename"] = f"{slug}_klimaat.gpkg"
 
     progress.progress(100, text="Klaar!")
-    status.success(f"✅ Analyse voltooid voor **{gemeente}** — {len(gdf)} buurten")
+    status.success(f"âœ… Analyse voltooid voor **{gemeente}** â€” {len(gdf)} buurten")
 
     # Trigger een re-render zodat de resultaten-sectie bovenaan verschijnt
     time.sleep(0.8)
@@ -693,7 +689,7 @@ try:
 except Exception as exc:
     progress.empty()
     status.empty()
-    st.error(f"❌ Analyse mislukt: {exc}")
+    st.error(f"âŒ Analyse mislukt: {exc}")
     with st.expander("Foutdetails"):
         import traceback
         st.code(traceback.format_exc())
