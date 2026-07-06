@@ -4,14 +4,20 @@ test_run.py
 -----------
 Quick smoke test / demo run for the enrich_wijken pipeline.
 
-Before running, fill in the two FILE PATH SECTIONS below with the
-actual locations of your downloaded data files.  See README.md for
-instructions on where to obtain them.
+By default this script reads all settings from config.yaml in the project root.
+You can also override individual values below or pass --config to point at a
+different YAML file.
 
 Run from the project root:
     python scripts/test_run.py
 
-Or with verbose logging:
+Use a custom config:
+    python scripts/test_run.py --config config.local.yaml
+
+Override gemeente only:
+    python scripts/test_run.py --gemeente Utrecht
+
+Verbose logging:
     python scripts/test_run.py --verbose
 """
 
@@ -23,109 +29,154 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from typing import Any
 
-# Make sure utils and enrich_wijken are importable when running from project root
+import yaml
+
+# Make sure sibling scripts are importable
 sys.path.insert(0, str(Path(__file__).parent))
 
 log = logging.getLogger(__name__)
 
+DEFAULT_CONFIG = Path(__file__).parent.parent / "config.yaml"
+
 # ===========================================================================
-# ✏️  FILL IN YOUR FILE PATHS HERE
+# Optional local overrides
+# Set a value here to override config.yaml without editing it.
+# Leave as None to use config.yaml.
 # ===========================================================================
 
-#: Path to the CBS Wijk- en Buurtenkaart GeoPackage.
-#: Download from: https://www.pdok.nl/downloads/-/article/cbs-wijk-en-buurtkaart
-#: Example: "data/raw/wijkenbuurten_2023.gpkg"
-CBS_GPKG = Path("data/raw/wijkenbuurten_2023.gpkg")
-
-#: Layer name inside the GeoPackage.
-#: Common values: "buurten_2023", "wijken_2023"
-#: Set to None to use the first available layer.
-CBS_LAYER = "buurten_2023"
-
-#: Municipality to use for the test run.
-#: Choose a medium-sized city to keep processing fast.
-#: Alternatives: "Utrecht", "Haarlem", "Tilburg", "Breda"
-GEMEENTE = "Eindhoven"
-
-#: Raster 1 — Heat stress (gevoelstemperatuur).
-#: Download from Klimaateffectatlas > Hitte > Gevoelstemperatuur
-#: https://www.klimaateffectatlas.nl
-RASTER_HITTE = Path("data/raw/hitte_gevoelstemperatuur.tif")
-
-#: Raster 2 — Drought / rainfall deficit (neerslagtekort).
-#: Download from Klimaateffectatlas > Droogte > Neerslagtekort
-#: Set to None to skip this raster in the test run.
-RASTER_DROOGTE = Path("data/raw/droogte_neerslagtekort.tif")
-
-#: Output path for the enriched GeoPackage.
-OUTPUT_PATH = Path("output/test_eindhoven_klimaat.gpkg")
-
-#: Threshold value for percentage-above calculation (e.g. 30 °C for heat stress).
-THRESHOLD = 30.0
+LOCAL_OVERRIDES: dict[str, Any] = {
+    "gemeente":  None,   # e.g. "Utrecht" — overrides config.yaml
+    "threshold": None,   # e.g. 35.0
+    "normalize": False,  # set True to add normalised columns
+}
 
 # ===========================================================================
 # End of configuration
 # ===========================================================================
 
 
-def check_files() -> tuple[bool, list[str]]:
-    """Verify that the required input files exist.
+def load_config(config_path: Path) -> dict[str, Any]:
+    """Load YAML config from *config_path*.
+
+    Returns an empty dict when the file does not exist so the rest of the
+    script can always treat the result as a dict.
+    """
+    if not config_path.exists():
+        return {}
+    with config_path.open("r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def resolve_settings(cfg: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Merge config.yaml values with LOCAL_OVERRIDES.
+
+    *overrides* values of None are ignored so unset keys fall through to cfg.
+
+    Parameters
+    ----------
+    cfg:       Parsed config.yaml dict.
+    overrides: LOCAL_OVERRIDES dict (None values are skipped).
 
     Returns
     -------
-    (ok, missing_paths) — ok is True when all required files are present.
+    Resolved settings dict ready for the pipeline.
     """
-    required = [CBS_GPKG, RASTER_HITTE]
+    root = Path(__file__).parent.parent
+
+    def _abs(p: str) -> Path:
+        path = Path(p)
+        return path if path.is_absolute() else root / path
+
+    cbs_path  = _abs(cfg.get("cbs_path", "data/raw/wijkenbuurten_2023.gpkg"))
+    cbs_layer = cfg.get("cbs_layer")
+    gemeente  = overrides.get("gemeente") or cfg.get("gemeente")
+    stats     = cfg.get("stats") or ["mean", "max", "std", "count"]
+    threshold = overrides.get("threshold") if overrides.get("threshold") is not None else cfg.get("threshold")
+    normalize = overrides.get("normalize") or False
+
+    # Build raster map from config
+    raster_map: dict[str, Path] = {}
+    for key, path_str in (cfg.get("rasters") or {}).items():
+        raster_map[key] = _abs(path_str)
+
+    # Derive output path
+    out_dir = root / (cfg.get("output_dir") or "output")
+    slug = (gemeente or "all").lower().replace(" ", "_")
+    output = out_dir / f"test_{slug}_klimaat.gpkg"
+
+    return {
+        "cbs_path":  cbs_path,
+        "cbs_layer": cbs_layer,
+        "rasters":   raster_map,
+        "gemeente":  gemeente,
+        "stats":     stats,
+        "threshold": threshold,
+        "normalize": normalize,
+        "output":    output,
+    }
+
+
+def check_files(settings: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Return (ok, missing_paths) for required input files."""
+    required = [settings["cbs_path"]] + list(settings["rasters"].values())
     missing = [str(p) for p in required if not p.exists()]
     return len(missing) == 0, missing
 
 
 def print_banner(title: str) -> None:
-    """Print a simple section banner to stdout."""
-    width = 60
-    print(f"\n{'─' * width}")
+    print(f"\n{'─' * 60}")
     print(f"  {title}")
-    print(f"{'─' * width}")
+    print(f"{'─' * 60}")
 
 
-def print_summary(gdf, original_cols: set[str], elapsed: float) -> None:
-    """Print a human-readable summary of the enrichment results.
+def print_settings(settings: dict[str, Any], config_path: Path) -> None:
+    """Print a readable overview of resolved settings."""
+    print_banner("klimaat-wijkprofielen-poc — test run")
+    print(f"  Config     : {config_path}")
+    print(f"  CBS bestand: {settings['cbs_path'].name}")
+    print(f"  CBS laag   : {settings['cbs_layer'] or 'eerste laag'}")
+    print(f"  Gemeente   : {settings['gemeente'] or 'alle'}")
+    for key, path in settings["rasters"].items():
+        exists = "✓" if path.exists() else "⚠️  niet gevonden"
+        print(f"  Raster [{key}]: {path.name}  {exists}")
+    print(f"  Stats      : {', '.join(settings['stats'])}")
+    print(f"  Drempel    : {settings['threshold']}")
+    print(f"  Normaliseer: {settings['normalize']}")
+    print(f"  Output     : {settings['output']}")
 
-    Parameters
-    ----------
-    gdf:           Enriched GeoDataFrame.
-    original_cols: Column names present before enrichment.
-    elapsed:       Wall-clock time in seconds.
-    """
-    added_cols = [c for c in gdf.columns if c not in original_cols and c != "geometry"]
-    stat_cols   = [c for c in added_cols if not c.endswith("_norm") and not c.startswith("pct")]
-    thresh_cols = [c for c in added_cols if "pct_above" in c]
-    norm_cols   = [c for c in added_cols if c.endswith("_norm")]
+
+def print_summary(gdf, original_cols: set, elapsed: float, settings: dict[str, Any]) -> None:
+    """Print a tabular summary of all enrichment columns."""
+    added = [c for c in gdf.columns if c not in original_cols and c != "geometry"]
+    stat_cols   = [c for c in added if not c.endswith("_norm") and "pct_above" not in c]
+    thresh_cols = [c for c in added if "pct_above" in c]
+    norm_cols   = [c for c in added if c.endswith("_norm")]
 
     print_banner("Resultaten samenvatting")
-    print(f"  Gemeente           : {GEMEENTE}")
-    print(f"  Aantal buurten     : {len(gdf)}")
-    print(f"  Verwerkingstijd    : {elapsed:.1f} seconden")
-    print(f"  Uitvoerbestand     : {OUTPUT_PATH}")
-    print()
+    print(f"  Gemeente          : {settings['gemeente'] or 'alle'}")
+    print(f"  Aantal rijen      : {len(gdf)}")
+    print(f"  Verwerkingstijd   : {elapsed:.1f} seconden")
+    print(f"  Uitvoerbestand    : {settings['output']}")
 
     if stat_cols:
-        print(f"  Zonal stat-kolommen ({len(stat_cols)}):")
+        print(f"\n  Zonal stat-kolommen ({len(stat_cols)}):")
         for col in stat_cols:
-            non_null = gdf[col].notna().sum()
-            val_min  = gdf[col].min()
-            val_max  = gdf[col].max()
-            val_mean = gdf[col].mean()
-            print(f"    {col:<35}  n={non_null:>3}  "
-                  f"min={val_min:>8.2f}  max={val_max:>8.2f}  gem={val_mean:>8.2f}")
+            n    = gdf[col].notna().sum()
+            vmin = gdf[col].min()
+            vmax = gdf[col].max()
+            vmean= gdf[col].mean()
+            print(f"    {col:<38}  n={n:>3}  "
+                  f"min={vmin:>8.2f}  max={vmax:>8.2f}  gem={vmean:>8.2f}")
 
     if thresh_cols:
-        print(f"\n  Drempelwaarde-kolommen (>{THRESHOLD}) ({len(thresh_cols)}):")
+        thr = settings["threshold"]
+        print(f"\n  Drempelwaarde-kolommen (>{thr}) ({len(thresh_cols)}):")
         for col in thresh_cols:
-            non_null = gdf[col].notna().sum()
-            val_mean = gdf[col].mean()
-            print(f"    {col:<35}  n={non_null:>3}  gemiddeld {val_mean:.1f}% boven drempel")
+            n    = gdf[col].notna().sum()
+            vmean= gdf[col].mean()
+            print(f"    {col:<38}  n={n:>3}  gemiddeld {vmean:.1f}% boven drempel")
 
     if norm_cols:
         print(f"\n  Genormaliseerde kolommen ({len(norm_cols)}):")
@@ -135,55 +186,56 @@ def print_summary(gdf, original_cols: set[str], elapsed: float) -> None:
     print()
 
 
-def run(verbose: bool = False) -> int:
-    """Execute the full test pipeline.
-
-    Parameters
-    ----------
-    verbose: Enable DEBUG-level logging.
-
-    Returns
-    -------
-    Exit code: 0 on success, 1 on missing files, 2 on processing error.
-    """
+def run(config_path: Path, gemeente_override: str | None, verbose: bool) -> int:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s  %(levelname)-8s  %(message)s",
         datefmt="%H:%M:%S",
     )
 
-    print_banner("klimaat-wijkprofielen-poc — test run")
-    print(f"  Gemeente  : {GEMEENTE}")
-    print(f"  CBS laag  : {CBS_LAYER or 'eerste laag'}")
-    print(f"  Raster 1  : {RASTER_HITTE}")
-    rasters_used = [RASTER_HITTE]
-    if RASTER_DROOGTE and RASTER_DROOGTE.exists():
-        print(f"  Raster 2  : {RASTER_DROOGTE}")
-        rasters_used.append(RASTER_DROOGTE)
-    elif RASTER_DROOGTE:
-        print(f"  Raster 2  : {RASTER_DROOGTE}  ⚠️  niet gevonden — wordt overgeslagen")
-    print(f"  Drempel   : {THRESHOLD}")
-    print(f"  Output    : {OUTPUT_PATH}")
+    # Merge LOCAL_OVERRIDES with any CLI gemeente override
+    overrides = {**LOCAL_OVERRIDES}
+    if gemeente_override:
+        overrides["gemeente"] = gemeente_override
 
-    # ── Check required files ────────────────────────────────────────────────
-    ok, missing = check_files()
-    if not ok:
-        print_banner("❌  Ontbrekende bestanden")
-        for path in missing:
-            print(f"  • {path}")
-        print(textwrap.dedent("""
-          Vul de bestandspaden in bovenaan dit script (test_run.py),
-          of raadpleeg README.md > "How to get the data" voor downloadinstructies.
-        """))
-        return 1
-
-    # ── Import pipeline modules ─────────────────────────────────────────────
-    try:
-        from enrich_wijken import (
-            load_wijken,
-            compute_zonal_stats,
-            save_output,
+    cfg = load_config(config_path)
+    if not cfg:
+        log.warning(
+            "config.yaml niet gevonden op %s — gebruik standaardwaarden.", config_path
         )
+
+    settings = resolve_settings(cfg, overrides)
+    print_settings(settings, config_path)
+
+    # ── Check required files ─────────────────────────────────────────────────
+    ok, missing = check_files(settings)
+    if not ok:
+        # Skip missing rasters gracefully; only fail on missing CBS file
+        missing_cbs   = [p for p in missing if "wijken" in p.lower() or p == str(settings["cbs_path"])]
+        missing_rasters = [p for p in missing if p not in missing_cbs]
+
+        if missing_rasters:
+            log.warning("Volgende rasters niet gevonden en worden overgeslagen:")
+            for p in missing_rasters:
+                log.warning("  • %s", p)
+            # Remove missing rasters from settings
+            settings["rasters"] = {
+                k: v for k, v in settings["rasters"].items() if v.exists()
+            }
+
+        if missing_cbs or not settings["rasters"]:
+            print_banner("❌  Ontbrekende bestanden")
+            for p in missing_cbs + ([] if settings["rasters"] else missing_rasters):
+                print(f"  • {p}")
+            print(textwrap.dedent("""
+              Pas config.yaml aan met de juiste bestandspaden, of raadpleeg
+              README.md > "How to get the data" voor downloadinstructies.
+            """))
+            return 1
+
+    # ── Import pipeline modules ──────────────────────────────────────────────
+    try:
+        from enrich_wijken import load_wijken, compute_zonal_stats, save_output
         from utils import (
             reproject_if_needed,
             calculate_percentage_above_threshold,
@@ -191,50 +243,32 @@ def run(verbose: bool = False) -> int:
         )
     except ImportError as exc:
         log.error("Kan pipeline-modules niet importeren: %s", exc)
-        log.error("Zorg dat requirements.txt geïnstalleerd is: pip install -r requirements.txt")
+        log.error("Installeer dependencies: pip install -r requirements.txt")
         return 2
 
-    # ── Run pipeline ────────────────────────────────────────────────────────
+    # ── Run pipeline ─────────────────────────────────────────────────────────
     try:
         t_start = time.perf_counter()
 
-        # 1. Load CBS polygons
-        gdf = load_wijken(CBS_GPKG, CBS_LAYER, GEMEENTE)
+        gdf = load_wijken(settings["cbs_path"], settings["cbs_layer"], settings["gemeente"])
         original_cols = set(gdf.columns)
 
-        # 2. Process each raster
-        for raster_path in rasters_used:
-            prefix = raster_path.stem.split("_")[0]  # e.g. "hitte", "droogte"
-
-            # Align CRS
+        for prefix, raster_path in settings["rasters"].items():
             gdf = reproject_if_needed(gdf, raster_path)
+            gdf = compute_zonal_stats(gdf, raster_path, settings["stats"], prefix)
 
-            # Standard zonal statistics
-            gdf = compute_zonal_stats(
-                gdf,
-                raster_path,
-                stats=["mean", "max", "std", "count"],
-                prefix=prefix,
-            )
+            if settings["threshold"] is not None:
+                gdf = calculate_percentage_above_threshold(
+                    gdf, raster_path, settings["threshold"], prefix
+                )
 
-            # Percentage above threshold
-            gdf = calculate_percentage_above_threshold(
-                gdf, raster_path, THRESHOLD, prefix
-            )
+            if settings["normalize"] and f"{prefix}_mean" in gdf.columns:
+                col = f"{prefix}_mean"
+                gdf[f"{col}_norm"] = normalize_column(gdf, col)
 
-            # Normalise the mean column (useful for composite scores)
-            mean_col = f"{prefix}_mean"
-            if mean_col in gdf.columns:
-                gdf[f"{mean_col}_norm"] = normalize_column(gdf, mean_col)
-
-        # 3. Save output
-        save_output(gdf, OUTPUT_PATH)
-
+        save_output(gdf, settings["output"])
         elapsed = time.perf_counter() - t_start
-
-        # 4. Print summary
-        print_summary(gdf, original_cols, elapsed)
-
+        print_summary(gdf, original_cols, elapsed, settings)
         print("✅  Test run geslaagd!")
         return 0
 
@@ -248,12 +282,26 @@ def main() -> int:
         description="Smoke test / demo voor de enrich_wijken pipeline."
     )
     parser.add_argument(
+        "--config", "-c",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        metavar="YAML",
+        help=f"Config-bestand (standaard: {DEFAULT_CONFIG.name}).",
+    )
+    parser.add_argument(
+        "--gemeente",
+        type=str,
+        default=None,
+        metavar="NAAM",
+        help="Overschrijf de gemeente uit config.yaml.",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Toon DEBUG-logberichten.",
     )
     args = parser.parse_args()
-    return run(verbose=args.verbose)
+    return run(args.config, args.gemeente, args.verbose)
 
 
 if __name__ == "__main__":
