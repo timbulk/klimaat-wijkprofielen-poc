@@ -41,14 +41,14 @@ PROJECT_ROOT = Path(__file__).parent
 
 WMS_URL = "https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_public/wms"
 
-# Curated list of useful KEA layers with display labels
-WMS_LAYERS = {
-    "Hitte-eiland (gevoelstemperatuur)":     "hitteeiland_r_hitte",
-    "Waterdiepte neerslag 140 mm/2 uur":     "waterdiepte_neerslag_140mm_2uur",
-    "Waterdiepte neerslag 70 mm/1 uur":      "waterdiepte_neerslag_70mm_1uur",
-    "Droogte — neerslagtekort":              "droogte_r_neerslagtekort",
-    "Hitte — gevoelstemperatuur dag":        "hitteeiland_r_hitte_dag",
-    "Stedelijke hitte (LST)":                "hitteeiland_r_lst",
+# Fallback layer list — shown when the WMS is unreachable on first load
+WMS_LAYERS_FALLBACK = {
+    "Hitte-eiland (gevoelstemperatuur)":  "hitteeiland_r_hitte",
+    "Waterdiepte neerslag 140 mm/2 uur":  "waterdiepte_neerslag_140mm_2uur",
+    "Waterdiepte neerslag 70 mm/1 uur":   "waterdiepte_neerslag_70mm_1uur",
+    "Droogte — neerslagtekort":           "droogte_r_neerslagtekort",
+    "Hitte — gevoelstemperatuur dag":     "hitteeiland_r_hitte_dag",
+    "Stedelijke hitte (LST)":             "hitteeiland_r_lst",
 }
 
 STATS_OPTIONS = ["mean", "max", "min", "std", "count", "sum", "median"]
@@ -76,6 +76,31 @@ def load_cbs_gemeenten(gpkg_path: str, layer: str | None) -> list[str]:
     except Exception:
         pass
     return []
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_wms_layers(wms_url: str) -> dict[str, str]:
+    """Fetch available layers from the WMS GetCapabilities endpoint.
+
+    Returns a dict of {display_label: layer_name} sorted alphabetically.
+    Falls back to WMS_LAYERS_FALLBACK on connection errors so the UI
+    remains usable when offline or the WMS is temporarily unavailable.
+
+    The result is cached for 5 minutes (ttl=300) to avoid repeated
+    GetCapabilities requests while the user adjusts settings.
+    """
+    try:
+        from owslib.wms import WebMapService
+        wms      = WebMapService(wms_url, version="1.1.1", timeout=15)
+        layers   = {
+            # Use the layer title when available, otherwise fall back to the name
+            (info.title or name): name
+            for name, info in wms.contents.items()
+            if info.title or name  # skip anonymous entries
+        }
+        return dict(sorted(layers.items(), key=lambda x: x[0].lower()))
+    except Exception:
+        return WMS_LAYERS_FALLBACK
 
 
 def gdf_to_gpkg_bytes(gdf: gpd.GeoDataFrame) -> bytes:
@@ -199,12 +224,28 @@ with st.sidebar:
     local_raster_path = None
 
     if use_wms:
+        with st.spinner("WMS-lagen ophalen…"):
+            available_layers = fetch_wms_layers(WMS_URL)
+
+        if available_layers is WMS_LAYERS_FALLBACK:
+            st.warning("⚠️ WMS niet bereikbaar — vaste lijst wordt getoond.", icon="⚠️")
+
+        # Pre-select the default layer from config if it exists in the list
+        default_layer_name = cfg.get("wms_layer", "hitteeiland_r_hitte")
+        layer_names        = list(available_layers.values())
+        layer_labels       = list(available_layers.keys())
+        default_idx        = (
+            layer_names.index(default_layer_name)
+            if default_layer_name in layer_names else 0
+        )
+
         wms_label = st.selectbox(
             "WMS-laag",
-            list(WMS_LAYERS.keys()),
-            index=0,
+            layer_labels,
+            index=default_idx,
+            help=f"{len(available_layers)} lagen beschikbaar op de WMS.",
         )
-        wms_layer = WMS_LAYERS[wms_label]
+        wms_layer = available_layers[wms_label]
         st.caption(f"Laagnaam: `{wms_layer}`")
 
         col1, col2 = st.columns(2)
