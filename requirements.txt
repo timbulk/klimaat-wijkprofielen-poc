@@ -11,3 +11,4 @@ Pillow
 streamlit
 folium
 streamlit-folium
+requests
