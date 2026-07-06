@@ -56,6 +56,8 @@ from utils import (
 from wms_utils import (
     DEFAULT_WMS_URL,
     DEFAULT_WMS_LAYER,
+    DEFAULT_RESOLUTION_M,
+    DEFAULT_BUFFER_M,
     TempRaster,
     download_wms_as_geotiff,
 )
@@ -381,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     wms_group.add_argument(
         "--wms-resolution",
         type=float,
-        default=10.0,
+        default=DEFAULT_RESOLUTION_M,
         metavar="METER",
         dest="wms_resolution",
         help="Pixelgrootte in meters voor WMS-download (standaard: 10).",
@@ -458,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                         wms_url=settings["wms_url"],
                         layer_name=settings["wms_layer"],
                         resolution_m=args.wms_resolution,
+                        buffer_m=args.wms_buffer,
                         output_path=tmp_path,
                     )
                     gdf = _enrich_from_raster(
