@@ -66,6 +66,23 @@ def load_config() -> dict:
 
 
 @st.cache_data(show_spinner=False)
+def list_gpkg_layers(gpkg_path: str) -> list[str]:
+    """Return the layer names available in a GeoPackage.
+
+    Uses fiona to read the layer list without loading any geometries.
+    Returns an empty list when the file does not exist or cannot be read.
+    """
+    import fiona
+    path = Path(gpkg_path)
+    if not path.exists():
+        return []
+    try:
+        return fiona.listlayers(str(path))
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=False)
 def load_cbs_gemeenten(gpkg_path: str, layer: str | None) -> list[str]:
     """Return a sorted list of unique gemeente names from the CBS file."""
     try:
@@ -216,15 +233,36 @@ with st.sidebar:
         value=cfg.get("cbs_path", "data/raw/wijkenbuurten_2023.gpkg"),
         help="Pad naar het CBS Wijk- en Buurtenkaart GeoPackage.",
     )
-    cbs_layer_input = st.text_input(
-        "Laagnaam",
-        value=cfg.get("cbs_layer") or "buurten_2023",
-        help="Laagnaam in het GeoPackage, bijv. 'buurten_2023'.",
-    )
+
+    cbs_full_path = PROJECT_ROOT / cbs_path_input
+
+    # Lees beschikbare lagen uit het GeoPackage — geen handmatig typen meer
+    available_layers = list_gpkg_layers(str(cbs_full_path))
+
+    if available_layers:
+        default_layer = cfg.get("cbs_layer") or "buurten_2023"
+        default_layer_idx = (
+            available_layers.index(default_layer)
+            if default_layer in available_layers else 0
+        )
+        cbs_layer_input = st.selectbox(
+            "Laag",
+            available_layers,
+            index=default_layer_idx,
+            help=f"{len(available_layers)} lagen gevonden in het GeoPackage.",
+        )
+    else:
+        # Bestand nog niet aanwezig — val terug op tekstinvoer
+        cbs_layer_input = st.text_input(
+            "Laagnaam (handmatig)",
+            value=cfg.get("cbs_layer") or "buurten_2023",
+            help="GeoPackage niet gevonden — voer de laagnaam handmatig in.",
+        )
+        if cbs_full_path.exists() is False:
+            st.warning(f"⚠️ Bestand niet gevonden:\n`{cbs_path_input}`", icon="⚠️")
 
     # ── Gemeente ─────────────────────────────────────────────────────────────
     st.subheader("🏙️ Gemeente")
-    cbs_full_path = PROJECT_ROOT / cbs_path_input
 
     gemeenten = load_cbs_gemeenten(str(cbs_full_path), cbs_layer_input)
     default_gemeente = cfg.get("gemeente", "Eindhoven")
