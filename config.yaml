@@ -20,8 +20,8 @@
 # Laagnamen zijn doorgaans 'buurten_2023' of 'wijken_2023'.
 # Zet cbs_layer op null om de eerste beschikbare laag te gebruiken.
 # -----------------------------------------------------------------------------
-cbs_path:  data/raw/wijkenbuurten_2023.gpkg
-cbs_layer: buurten_2023
+cbs_path:  data/raw/wijkenbuurten.gpkg
+cbs_layer: wijken
 
 
 # -----------------------------------------------------------------------------
@@ -34,7 +34,7 @@ cbs_layer: buurten_2023
 # Zet op null om alle gemeenten te verwerken.
 # Alternatieven: Utrecht, Haarlem, Tilburg, Breda, Groningen
 # -----------------------------------------------------------------------------
-gemeente: Eindhoven
+gemeente: Amsterdam
 
 
 # -----------------------------------------------------------------------------
@@ -46,7 +46,7 @@ gemeente: Eindhoven
 # Download rasters op:  https://www.klimaateffectatlas.nl
 # Formaat:  prefix: pad/naar/bestand.tif
 # -----------------------------------------------------------------------------
-rasters:
+#rasters:
   # hitte:    data/raw/hitte_gevoelstemperatuur.tif
   # droogte:  data/raw/droogte_neerslagtekort.tif
   # wateroverlast: data/raw/wateroverlast_overstroming.tif
@@ -66,7 +66,7 @@ rasters:
 #     print('\n'.join(wms.contents.keys()))
 #   "
 # -----------------------------------------------------------------------------
-wms_layer: hitteeiland_r_hitte   # null = uitgeschakeld
+wms_layer: hitteeiland   # null = uitgeschakeld
 wms_url:   https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_public/wms
 wms_resolution: 50               # pixels in meters (50 = snel; 10 = gedetailleerd)
 wms_buffer: 500                  # buffer in meters rondom de gemeente-bbox
@@ -92,7 +92,7 @@ stats:
 # Kolom wordt toegevoegd als {prefix}_pct_above_{threshold}.
 # Zet op null om de drempelwaarde-berekening over te slaan.
 # -----------------------------------------------------------------------------
-threshold: null                  # bijv. 30.0 voor hittestress-analyse
+threshold: 30.0                  # bijv. 30.0 voor hittestress-analyse
 
 
 # -----------------------------------------------------------------------------
