@@ -1,6 +1,7 @@
 # klimaat-wijkprofielen-poc
 
-> **Proof of concept** — Enrich CBS neighbourhood polygons with climate impact raster data from the Klimaateffectatlas using zonal statistics.
+> **Proof of concept** — Enrich CBS neighbourhood polygons with climate impact data from the
+> Klimaateffectatlas by calculating zonal statistics per neighbourhood or district.
 
 ---
 
@@ -91,42 +92,134 @@ data/raw/droogte_neerslagtekort.tif
 
 ---
 
-## Usage
+## Quick Start & Testing
 
-### Basic — single raster
+### 1. Configure `test_run.py`
+
+Open `scripts/test_run.py` and fill in the file paths at the top of the file:
+
+```python
+# ✏️  FILL IN YOUR FILE PATHS HERE
+
+CBS_GPKG       = Path("data/raw/wijkenbuurten_2023.gpkg")
+CBS_LAYER      = "buurten_2023"
+GEMEENTE       = "Eindhoven"                               # or Utrecht, Haarlem, Tilburg …
+RASTER_HITTE   = Path("data/raw/hitte_gevoelstemperatuur.tif")
+RASTER_DROOGTE = Path("data/raw/droogte_neerslagtekort.tif")  # set to None to skip
+OUTPUT_PATH    = Path("output/test_eindhoven_klimaat.gpkg")
+THRESHOLD      = 30.0   # pixels above this value → percentage column
+```
+
+### 2. Run the test
 
 ```bash
-python scripts/bereken_wijkprofielen.py \
+python scripts/test_run.py
+```
+
+Or with verbose logging:
+
+```bash
+python scripts/test_run.py --verbose
+```
+
+### 3. Expected console output
+
+```
+────────────────────────────────────────────────────
+  klimaat-wijkprofielen-poc — test run
+────────────────────────────────────────────────────
+  Gemeente  : Eindhoven
+  CBS laag  : buurten_2023
+  Raster 1  : data/raw/hitte_gevoelstemperatuur.tif
+  Raster 2  : data/raw/droogte_neerslagtekort.tif
+  Drempel   : 30.0
+  Output    : output/test_eindhoven_klimaat.gpkg
+
+10:12:34  INFO     Laad wijken van wijkenbuurten_2023.gpkg (layer=buurten_2023)
+10:12:34  INFO       3956 rijen geladen, CRS: EPSG:28992
+10:12:34  INFO       Gefilterd op 'Eindhoven': 88 rijen over
+10:12:35  INFO     Bereken zonal stats [mean, max, std, count] voor hitte_gevoelstemperatuur.tif
+...
+
+────────────────────────────────────────────────────
+  Resultaten samenvatting
+────────────────────────────────────────────────────
+  Gemeente           : Eindhoven
+  Aantal buurten     : 88
+  Verwerkingstijd    : 4.3 seconden
+  Uitvoerbestand     : output/test_eindhoven_klimaat.gpkg
+
+  Zonal stat-kolommen (8):
+    hitte_mean                           n= 88  min=   24.10  max=   33.80  gem=   29.41
+    hitte_max                            n= 88  min=   28.50  max=   37.20  gem=   33.12
+    hitte_std                            n= 88  min=    0.82  max=    3.14  gem=    1.73
+    hitte_count                          n= 88  min=   12.00  max=  843.00  gem=  211.40
+    droogte_mean                         n= 88  min=   55.20  max=  142.60  gem=   98.33
+    ...
+
+  Drempelwaarde-kolommen (>30.0) (2):
+    hitte_pct_above_30.0                 n= 88  gemiddeld 43.2% boven drempel
+    droogte_pct_above_30.0               n= 88  gemiddeld 91.7% boven drempel
+
+  Genormaliseerde kolommen (2):
+    hitte_mean_norm
+    droogte_mean_norm
+
+✅  Test run geslaagd!
+```
+
+### 4. What if files are missing?
+
+The script checks for missing files before starting and prints clear instructions:
+
+```
+────────────────────────────────────────────────────
+  ❌  Ontbrekende bestanden
+────────────────────────────────────────────────────
+  • data/raw/wijkenbuurten_2023.gpkg
+
+  Vul de bestandspaden in bovenaan dit script (test_run.py),
+  of raadpleeg README.md > "How to get the data" voor downloadinstructies.
+```
+
+---
+
+## Usage
+
+### Basic — single raster with auto-derived prefix
+
+```bash
+python scripts/enrich_wijken.py \
   --wijken   data/raw/wijkenbuurten_2023.gpkg \
   --layer    buurten_2023 \
-  --raster   data/raw/hitte_gevoelstemperatuur.tif \
-  --stats    mean max \
+  --rasters  data/raw/hitte_gevoelstemperatuur.tif \
   --output   output/buurten_hitte.gpkg
 ```
 
-### Multiple rasters in one run
+### Multiple rasters with explicit prefixes
 
 ```bash
-python scripts/bereken_wijkprofielen.py \
+python scripts/enrich_wijken.py \
   --wijken   data/raw/wijkenbuurten_2023.gpkg \
   --layer    buurten_2023 \
-  --raster   data/raw/hitte_gevoelstemperatuur.tif \
-             data/raw/droogte_neerslagtekort.tif \
-  --stats    mean max std \
+  --rasters  hitte=data/raw/hitte_gevoelstemperatuur.tif \
+             droogte=data/raw/droogte_neerslagtekort.tif \
   --output   output/buurten_klimaat.gpkg
 ```
 
-### Filter to a single municipality
+### Full example — filter by municipality, threshold + normalize
 
 ```bash
-python scripts/bereken_wijkprofielen.py \
-  --wijken      data/raw/wijkenbuurten_2023.gpkg \
-  --layer       buurten_2023 \
-  --raster      data/raw/hitte_gevoelstemperatuur.tif \
-  --filter-col  GM_NAAM \
-  --filter-val  "Amsterdam" \
-  --stats       mean max \
-  --output      output/amsterdam_hitte.gpkg
+python scripts/enrich_wijken.py \
+  --wijken     data/raw/wijkenbuurten_2023.gpkg \
+  --layer      buurten_2023 \
+  --rasters    hitte=data/raw/hitte_gevoelstemperatuur.tif \
+               droogte=data/raw/droogte_neerslagtekort.tif \
+  --gemeente   Eindhoven \
+  --stats      mean max std count \
+  --threshold  30 \
+  --normalize \
+  --output     output/eindhoven_klimaat.gpkg
 ```
 
 ### Arguments
@@ -135,11 +228,13 @@ python scripts/bereken_wijkprofielen.py \
 |---|---|---|
 | `--wijken` | ✅ | Path to CBS GeoPackage or Shapefile |
 | `--layer` | | Layer name inside the GeoPackage (default: first layer) |
-| `--raster` | ✅ | One or more GeoTIFF paths |
-| `--stats` | | Statistics to compute (default: `mean max`) |
-| `--filter-col` | | Column name to filter on (e.g. `GM_NAAM`) |
-| `--filter-val` | | Value to filter on (e.g. `Amsterdam`) |
+| `--rasters` | ✅ | One or more rasters as `key=path.tif` or `path.tif` |
+| `--gemeente` | | Filter on municipality name (GM_NAAM column) |
+| `--stats` | | Statistics to compute (default: `mean max std count`) |
+| `--threshold` | | Add a `{prefix}_pct_above_{threshold}` column per raster |
+| `--normalize` | | Add min-max normalised `{prefix}_mean_norm` columns |
 | `--output` | ✅ | Output GeoPackage path |
+| `--verbose` / `-v` | | Enable DEBUG logging |
 
 ---
 
@@ -148,14 +243,16 @@ python scripts/bereken_wijkprofielen.py \
 ```
 klimaat-wijkprofielen-poc/
 ├── .github/
-│   └── workflows/          # CI/CD (future)
+│   └── workflows/              # CI/CD (future)
 ├── data/
-│   ├── raw/                # Source data — git-ignored
-│   └── processed/          # Intermediate outputs
-├── docs/                   # Documentation, methodology notes
-├── output/                 # Final GeoPackages
+│   ├── raw/                    # Source data — git-ignored
+│   └── processed/              # Intermediate outputs
+├── docs/                       # Documentation, methodology notes
+├── output/                     # Final GeoPackages
 ├── scripts/
-│   └── bereken_wijkprofielen.py   # Main analysis script
+│   ├── enrich_wijken.py        # Main CLI script
+│   ├── utils.py                # Shared helper functions
+│   └── test_run.py             # Quick start / smoke test
 ├── .gitignore
 ├── requirements.txt
 └── README.md
@@ -165,12 +262,12 @@ klimaat-wijkprofielen-poc/
 
 ## Next steps
 
-- [ ] **Script implementatie** — write `scripts/bereken_wijkprofielen.py` with full CLI
-- [ ] **Meerdere thema's** — extend with flood risk, drought, and urban greenery layers
 - [ ] **Visualisatie** — add a choropleth export script using `matplotlib` / `contextily`
 - [ ] **Automatische download** — fetch Klimaateffectatlas rasters via WCS in one command
+- [ ] **Meerdere thema's** — extend with flood risk, urban greenery, and extreme rainfall layers
 - [ ] **CI workflow** — add GitHub Actions to run a smoke test on synthetic data
 - [ ] **Dashboard** — explore linking output to a lightweight web viewer (e.g. Felt, Kepler.gl)
+- [ ] **Unit tests** — add pytest tests for `utils.py` functions
 
 ---
 
