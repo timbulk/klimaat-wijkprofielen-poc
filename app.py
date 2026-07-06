@@ -319,8 +319,9 @@ st.markdown(
 )
 
 if not run_button:
-    # Toon resultaten van een eerdere run als die er zijn — zo blijft de
-    # download-knop zichtbaar na sidebar-interactie of andere re-renders.
+    # Geen run gevraagd — toon landing of eerdere resultaten, maar voer
+    # NOOIT de pipeline opnieuw uit (voorkomt herberekening bij scrollen,
+    # sidebar-interactie of andere Streamlit re-renders).
     if st.session_state.get("gdf") is None:
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Databron", "WMS" if use_wms else "Lokaal .tif")
@@ -330,11 +331,12 @@ if not run_button:
             "👈 Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
             icon="ℹ️",
         )
-        st.stop()
-    # else: fall through to the results section below
+    # Altijd stoppen als de Run-knop niet ingedrukt is — resultaten worden
+    # hieronder getoond via de aparte resultaten-sectie die session_state leest.
+    st.stop()
 
 # ---------------------------------------------------------------------------
-# Run pipeline
+# Run pipeline — alleen uitgevoerd als run_button == True
 # ---------------------------------------------------------------------------
 
 if not selected_stats:
