@@ -312,17 +312,119 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Main content
 # ---------------------------------------------------------------------------
+# Structuur (volgorde is cruciaal voor Streamlit):
+#   1. Titel
+#   2. Resultaten uit session_state (altijd getoond als beschikbaar)
+#   3. Guard: stop als run_button niet ingedrukt (landing of resultaten al zichtbaar)
+#   4. Pipeline (alleen bereikbaar als run_button == True)
+# ---------------------------------------------------------------------------
 
 st.title("🌡️ Klimaat Wijkprofielen POC")
 st.markdown(
     "Verrijk CBS buurten met klimaatdata uit de Klimaateffectatlas via **zonal statistics**."
 )
 
+# ---------------------------------------------------------------------------
+# Stap 1 — Toon resultaten van een eerdere run (altijd, boven de stop-guard)
+# ---------------------------------------------------------------------------
+# Door de resultaten vóór de st.stop() te renderen blijven ze zichtbaar
+# bij elke re-render (scrollen, sidebar-interactie, kaart-interactie).
+
+_prev_gdf   = st.session_state.get("gdf")
+_prev_cols  = st.session_state.get("original_cols", set())
+_prev_gem   = st.session_state.get("gemeente", "")
+
+if _prev_gdf is not None:
+    _added      = [c for c in _prev_gdf.columns if c not in _prev_cols and c != "geometry"]
+    _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c]
+    _thresh_cols= [c for c in _added if "pct_above" in c]
+    _norm_cols  = [c for c in _added if c.endswith("_norm")]
+
+    st.divider()
+    st.subheader(f"📋 Resultaten — {_prev_gem}")
+
+    # KPI metrics
+    _kpi_cols = st.columns(min(4, len(_stat_cols)) or 1)
+    for _i, _col in enumerate(_stat_cols[:4]):
+        with _kpi_cols[_i % len(_kpi_cols)]:
+            _val  = _prev_gdf[_col].mean()
+            _vmax = _prev_gdf[_col].max()
+            st.metric(_col, f"{_val:.2f}" if _val is not None else "—",
+                      delta=f"max {_vmax:.2f}", delta_color="off")
+
+    # Download-knop — leest altijd uit session_state, nooit opnieuw berekend
+    st.divider()
+    _col_dl, _col_info = st.columns([1, 3])
+    with _col_dl:
+        st.download_button(
+            label="⬇️ Download GeoPackage",
+            data=st.session_state["gpkg_bytes"],
+            file_name=st.session_state["gpkg_filename"],
+            mime="application/geopackage+sqlite3",
+            use_container_width=True,
+            type="primary",
+        )
+    with _col_info:
+        st.caption(
+            f"**{len(_prev_gdf)}** buurten · **{len(_added)}** nieuwe kolommen · "
+            f"CRS: {_prev_gdf.crs.to_string() if _prev_gdf.crs else '—'}"
+        )
+
+    # Tabel
+    st.subheader("📊 Statistieken per buurt")
+    _name_col = next((c for c in ("buurtnaam", "BU_NAAM", "wijknaam", "WK_NAAM") if c in _prev_gdf.columns), None)
+    _disp_cols = ([_name_col] if _name_col else []) + _stat_cols + _thresh_cols + _norm_cols
+    if _disp_cols:
+        _df_disp = style_summary_table(_prev_gdf[_disp_cols])
+        st.dataframe(
+            _df_disp,
+            use_container_width=True,
+            height=350,
+            column_config={
+                c: st.column_config.NumberColumn(c, format="%.2f")
+                for c in _stat_cols + _thresh_cols + _norm_cols
+                if c in _df_disp.columns
+            },
+        )
+
+    # Kaart
+    st.subheader("🗺️ Kaart")
+    _map_opts = _stat_cols + _thresh_cols + _norm_cols
+    if _map_opts:
+        _map_col = st.selectbox("Toon op kaart", _map_opts, index=0, key="map_col_select")
+        try:
+            import streamlit_folium as stf
+            stf.st_folium(make_choropleth(_prev_gdf, _map_col),
+                          use_container_width=True, height=500)
+        except ImportError:
+            import matplotlib.pyplot as plt
+            _fig, _ax = plt.subplots(figsize=(10, 8))
+            _prev_gdf.to_crs("EPSG:4326").plot(
+                column=_map_col, ax=_ax, legend=True, cmap="YlOrRd",
+                missing_kwds={"color": "#cccccc", "label": "geen data"},
+            )
+            _ax.set_title(f"{_map_col} — {_prev_gem}", fontsize=13)
+            _ax.set_axis_off()
+            st.pyplot(_fig)
+            st.caption("💡 `pip install streamlit-folium folium` voor interactieve kaart")
+
+    st.divider()
+    st.caption(
+        "klimaat-wijkprofielen-poc · "
+        "Data: [CBS](https://www.pdok.nl) & "
+        "[Klimaateffectatlas](https://www.klimaateffectatlas.nl) · "
+        "Gebouwd met Streamlit"
+    )
+
+# ---------------------------------------------------------------------------
+# Stap 2 — Stop hier als de Run-knop NIET ingedrukt is
+# ---------------------------------------------------------------------------
+# Alles hierboven (resultaten) is al gerenderd. st.stop() voorkomt dat
+# de pipeline-code hieronder bij elke re-render wordt uitgevoerd.
+
 if not run_button:
-    # Geen run gevraagd — toon landing of eerdere resultaten, maar voer
-    # NOOIT de pipeline opnieuw uit (voorkomt herberekening bij scrollen,
-    # sidebar-interactie of andere Streamlit re-renders).
-    if st.session_state.get("gdf") is None:
+    if _prev_gdf is None:
+        # Nog geen resultaten — toon landing
         col_a, col_b, col_c = st.columns(3)
         col_a.metric("Databron", "WMS" if use_wms else "Lokaal .tif")
         col_b.metric("Gemeente", gemeente or "—")
@@ -331,12 +433,10 @@ if not run_button:
             "👈 Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
             icon="ℹ️",
         )
-    # Altijd stoppen als de Run-knop niet ingedrukt is — resultaten worden
-    # hieronder getoond via de aparte resultaten-sectie die session_state leest.
-    st.stop()
+    st.stop()  # stop altijd — pipeline mag nooit ongewild draaien
 
 # ---------------------------------------------------------------------------
-# Run pipeline — alleen uitgevoerd als run_button == True
+# Stap 3 — Pipeline (alleen bereikbaar als run_button == True)
 # ---------------------------------------------------------------------------
 
 if not selected_stats:
@@ -351,7 +451,7 @@ try:
     from utils import reproject_if_needed, calculate_percentage_above_threshold, normalize_column
     from wms_utils import TempRaster, download_wms_as_geotiff
 
-    # ── Stap 1: CBS laden ────────────────────────────────────────────────────
+    # Stap 1: CBS laden
     status.info("📂 CBS data laden…")
     progress.progress(10, text="CBS laden…")
 
@@ -367,7 +467,7 @@ try:
     status.info(f"✅ {len(gdf)} buurten geladen voor **{gemeente}**")
     time.sleep(0.3)
 
-    # ── Stap 2: Raster verwerken ─────────────────────────────────────────────
+    # Stap 2: Raster verwerken
     if use_wms:
         status.info(f"🛰️ WMS-laag downloaden: `{wms_layer}`…")
         progress.progress(45, text="WMS downloaden…")
@@ -383,31 +483,24 @@ try:
             )
             progress.progress(65, text="Zonal statistics berekenen…")
             status.info("📐 Zonal statistics berekenen…")
-
             prefix = wms_layer[:20]
             gdf = _enrich_from_raster(
-                gdf, tmp_path, prefix,
-                selected_stats, threshold, normalize,
+                gdf, tmp_path, prefix, selected_stats, threshold, normalize,
             )
     else:
         local_path = PROJECT_ROOT / local_raster_path
         if not local_path.exists():
             st.error(f"Rasterbestand niet gevonden: `{local_raster_path}`")
             st.stop()
-
         progress.progress(50, text="Zonal statistics berekenen…")
         status.info("📐 Zonal statistics berekenen…")
-
         gdf = _enrich_from_raster(
-            gdf, local_path, raster_prefix,
-            selected_stats, threshold, normalize,
+            gdf, local_path, raster_prefix, selected_stats, threshold, normalize,
         )
 
-    progress.progress(90, text="Resultaten verwerken…")
+    progress.progress(90, text="Resultaten opslaan…")
 
-    # ── Resultaten opslaan in session state ──────────────────────────────────
-    # Sla ook de geserialiseerde bytes op zodat de download-knop beschikbaar
-    # blijft bij iedere re-render, ook nadat de progress bar is verdwenen.
+    # Opslaan in session_state — resultaten worden getoond bij volgende render
     slug = gemeente.lower().replace(" ", "_")
     st.session_state["gdf"]           = gdf
     st.session_state["original_cols"] = original_cols
@@ -419,6 +512,10 @@ try:
     progress.progress(100, text="Klaar!")
     status.success(f"✅ Analyse voltooid voor **{gemeente}** — {len(gdf)} buurten")
 
+    # Trigger een re-render zodat de resultaten-sectie bovenaan verschijnt
+    time.sleep(0.8)
+    st.rerun()
+
 except Exception as exc:
     progress.empty()
     status.empty()
@@ -427,122 +524,3 @@ except Exception as exc:
         import traceback
         st.code(traceback.format_exc())
     st.stop()
-
-# ---------------------------------------------------------------------------
-# Results section
-# ---------------------------------------------------------------------------
-
-gdf           = st.session_state.get("gdf")
-original_cols = st.session_state.get("original_cols", set())
-prefix        = st.session_state.get("prefix", "")
-
-if gdf is None:
-    st.stop()
-
-added_cols  = [c for c in gdf.columns if c not in original_cols and c != "geometry"]
-stat_cols   = [c for c in added_cols if not c.endswith("_norm") and "pct_above" not in c]
-thresh_cols = [c for c in added_cols if "pct_above" in c]
-norm_cols   = [c for c in added_cols if c.endswith("_norm")]
-
-st.divider()
-st.subheader(f"📋 Resultaten — {gemeente}")
-
-# ── KPI metrics ─────────────────────────────────────────────────────────────
-kpi_cols = st.columns(min(4, len(stat_cols)) or 1)
-for i, col in enumerate(stat_cols[:4]):
-    with kpi_cols[i % len(kpi_cols)]:
-        val  = gdf[col].mean()
-        vmax = gdf[col].max()
-        st.metric(
-            label=col,
-            value=f"{val:.2f}" if val is not None else "—",
-            delta=f"max {vmax:.2f}",
-            delta_color="off",
-        )
-
-# ── Download-knop ─────────────────────────────────────────────────────────────
-# Bytes zijn al berekend en opgeslagen tijdens de run — de knop blijft
-# beschikbaar bij iedere re-render zonder dat de data opnieuw geserialiseerd
-# hoeft te worden.
-st.divider()
-col_dl, col_info = st.columns([1, 3])
-with col_dl:
-    st.download_button(
-        label="⬇️ Download GeoPackage",
-        data=st.session_state["gpkg_bytes"],
-        file_name=st.session_state["gpkg_filename"],
-        mime="application/geopackage+sqlite3",
-        use_container_width=True,
-        type="primary",
-    )
-with col_info:
-    st.caption(
-        f"**{len(gdf)}** buurten · **{len(added_cols)}** nieuwe kolommen · "
-        f"CRS: {gdf.crs.to_string() if gdf.crs else '—'}"
-    )
-
-# ── Samenvatting tabel ───────────────────────────────────────────────────────
-st.subheader("📊 Statistieken per buurt")
-
-name_col = next((c for c in ("buurtnaam", "BU_NAAM", "wijknaam", "WK_NAAM") if c in gdf.columns), None)
-display_cols = ([name_col] if name_col else []) + stat_cols + thresh_cols + norm_cols
-
-if display_cols:
-    df_display = style_summary_table(gdf[display_cols])
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        height=350,
-        column_config={
-            col: st.column_config.NumberColumn(col, format="%.2f")
-            for col in stat_cols + thresh_cols + norm_cols
-            if col in df_display.columns
-        },
-    )
-
-# ── Kaart ────────────────────────────────────────────────────────────────────
-st.subheader("🗺️ Kaart")
-
-map_col_options = stat_cols + thresh_cols + norm_cols
-if not map_col_options:
-    st.info("Geen numerieke kolommen beschikbaar voor de kaart.")
-else:
-    col_map_sel, col_map_info = st.columns([2, 3])
-    with col_map_sel:
-        map_column = st.selectbox(
-            "Toon op kaart",
-            map_col_options,
-            index=0,
-        )
-
-    try:
-        import streamlit_folium as stf
-        m = make_choropleth(gdf, map_column)
-        stf.st_folium(m, use_container_width=True, height=500)
-    except ImportError:
-        # Fallback: static matplotlib map
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(10, 8))
-        gdf.to_crs("EPSG:4326").plot(
-            column=map_column,
-            ax=ax,
-            legend=True,
-            cmap="YlOrRd",
-            missing_kwds={"color": "#cccccc", "label": "geen data"},
-        )
-        ax.set_title(f"{map_column} — {gemeente}", fontsize=13)
-        ax.set_axis_off()
-        st.pyplot(fig)
-        st.caption(
-            "💡 Installeer `streamlit-folium` voor een interactieve kaart: "
-            "`pip install streamlit-folium folium`"
-        )
-
-# ── Footer ───────────────────────────────────────────────────────────────────
-st.divider()
-st.caption(
-    "klimaat-wijkprofielen-poc · "
-    "Data: [CBS](https://www.pdok.nl) & "
-    "[Klimaateffectatlas](https://www.klimaateffectatlas.nl) · "
-    "Gebouwd met Streamlit"
-)
