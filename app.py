@@ -319,17 +319,19 @@ st.markdown(
 )
 
 if not run_button:
-    # Landing state
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Databron", "WMS" if use_wms else "Lokaal .tif")
-    col_b.metric("Gemeente", gemeente or "—")
-    col_c.metric("Statistieken", ", ".join(selected_stats) if selected_stats else "—")
-
-    st.info(
-        "👈 Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
-        icon="ℹ️",
-    )
-    st.stop()
+    # Toon resultaten van een eerdere run als die er zijn — zo blijft de
+    # download-knop zichtbaar na sidebar-interactie of andere re-renders.
+    if st.session_state.get("gdf") is None:
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Databron", "WMS" if use_wms else "Lokaal .tif")
+        col_b.metric("Gemeente", gemeente or "—")
+        col_c.metric("Statistieken", ", ".join(selected_stats) if selected_stats else "—")
+        st.info(
+            "👈 Stel de analyse in via de sidebar en klik op **Run Analyse** om te starten.",
+            icon="ℹ️",
+        )
+        st.stop()
+    # else: fall through to the results section below
 
 # ---------------------------------------------------------------------------
 # Run pipeline
@@ -402,10 +404,15 @@ try:
     progress.progress(90, text="Resultaten verwerken…")
 
     # ── Resultaten opslaan in session state ──────────────────────────────────
+    # Sla ook de geserialiseerde bytes op zodat de download-knop beschikbaar
+    # blijft bij iedere re-render, ook nadat de progress bar is verdwenen.
+    slug = gemeente.lower().replace(" ", "_")
     st.session_state["gdf"]           = gdf
     st.session_state["original_cols"] = original_cols
     st.session_state["gemeente"]      = gemeente
     st.session_state["prefix"]        = wms_layer[:20] if use_wms else raster_prefix
+    st.session_state["gpkg_bytes"]    = gdf_to_gpkg_bytes(gdf)
+    st.session_state["gpkg_filename"] = f"{slug}_klimaat.gpkg"
 
     progress.progress(100, text="Klaar!")
     status.success(f"✅ Analyse voltooid voor **{gemeente}** — {len(gdf)} buurten")
@@ -451,16 +458,17 @@ for i, col in enumerate(stat_cols[:4]):
             delta_color="off",
         )
 
-# ── Download-knop ────────────────────────────────────────────────────────────
+# ── Download-knop ─────────────────────────────────────────────────────────────
+# Bytes zijn al berekend en opgeslagen tijdens de run — de knop blijft
+# beschikbaar bij iedere re-render zonder dat de data opnieuw geserialiseerd
+# hoeft te worden.
 st.divider()
 col_dl, col_info = st.columns([1, 3])
 with col_dl:
-    slug      = gemeente.lower().replace(" ", "_")
-    gpkg_data = gdf_to_gpkg_bytes(gdf)
     st.download_button(
         label="⬇️ Download GeoPackage",
-        data=gpkg_data,
-        file_name=f"{slug}_klimaat.gpkg",
+        data=st.session_state["gpkg_bytes"],
+        file_name=st.session_state["gpkg_filename"],
         mime="application/geopackage+sqlite3",
         use_container_width=True,
         type="primary",
