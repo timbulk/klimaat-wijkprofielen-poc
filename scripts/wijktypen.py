@@ -1,190 +1,172 @@
 """
 wijktypen.py
 ------------
-Fetch the wijktypen_buurten layer from the Klimaateffectatlas WFS and join it
-to the CBS GeoDataFrame as a new column.
+Fetch wijktypen_buurten from the Klimaateffectatlas WFS and join to CBS GDF.
 
-The wijktypen layer assigns each neighbourhood to one of ~10 urban typology
-classes (e.g. "Stadscentrum", "Naoorlogse wijk", "Groenstedelijk") based on
-morphological and socioeconomic characteristics.
+The WFS feature properties (confirmed via GetFeature inspection):
+  BU_CODE     — CBS buurtcode, used for the attribute join
+  Wijktype1   — dominant wijktype (e.g. "Tuinstad hoogbouw")
+  Beoordelin  — confidence score for Wijktype1
+  Wijktype2   — secondary wijktype
+  Beoordeli2  — confidence score for Wijktype2
+  WijktypeDe  — definitive/final wijktype label
 
-Source: Klimaateffectatlas / KEA public WFS (Sogelink)
-Layer:  kea_public:wijktypen_buurten
+Join strategy: attribute join on BU_CODE — fast and exact, no geometry needed.
+Falls back to a spatial centroid join when BU_CODE is absent in *gdf*.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 import requests
 
 log = logging.getLogger(__name__)
 
-WFS_URL        = (
+WFS_URL   = (
     "https://cas.cloud.sogelink.com/public/data/org/gws/"
     "YWFMLMWERURF/kea_public/ows"
 )
-WFS_LAYER      = "kea_public:wijktypen_buurten"
-WIJKTYPE_COL   = "wijktype"          # output column name in the enriched GDF
-OUTPUT_CRS     = "EPSG:28992"
+WFS_LAYER = "kea_public:wijktypen_buurten"
+RD_CRS    = "EPSG:28992"
+
+# Columns we want to pull from the WFS (subset to keep output clean)
+WFS_COLS = {
+    "BU_CODE":    "bu_code_wfs",   # only used for the join, dropped afterwards
+    "WijktypeDe": "wijktype",      # definitive/dominant label
+    "Wijktype1":  "wijktype_1",    # primary candidate
+    "Beoordelin": "wijktype_1_score",
+    "Wijktype2":  "wijktype_2",    # secondary candidate
+    "Beoordeli2": "wijktype_2_score",
+}
 
 
-def fetch_wijktypen(
-    gdf: gpd.GeoDataFrame,
-    wfs_url: str = WFS_URL,
-    layer: str = WFS_LAYER,
-    timeout: int = 30,
-) -> gpd.GeoDataFrame:
-    """Download wijktypen polygons from WFS clipped to *gdf*'s bounding box.
-
-    Parameters
-    ----------
-    gdf:     CBS neighbourhood GeoDataFrame (filtered to one gemeente).
-    wfs_url: WFS base URL.
-    layer:   WFS layer name.
-    timeout: HTTP timeout in seconds.
-
-    Returns
-    -------
-    GeoDataFrame with wijktypen polygons for the area, in EPSG:28992.
-
-    Raises
-    ------
-    RuntimeError  When the WFS request fails or returns no features.
-    """
-    # Reproject to RD New so bbox coordinates are in metres
-    gdf_rd = gdf.to_crs(OUTPUT_CRS) if str(gdf.crs) != OUTPUT_CRS else gdf
+def _fetch_wfs_bbox(gdf: gpd.GeoDataFrame, timeout: int) -> gpd.GeoDataFrame:
+    """Download wijktypen features clipped to *gdf* bounding box."""
+    gdf_rd = gdf.to_crs(RD_CRS) if str(gdf.crs) != RD_CRS else gdf
     minx, miny, maxx, maxy = gdf_rd.total_bounds
 
     params = {
         "SERVICE":      "WFS",
         "VERSION":      "2.0.0",
         "REQUEST":      "GetFeature",
-        "TYPENAMES":    layer,
-        "SRSNAME":      OUTPUT_CRS,
-        "BBOX":         f"{minx},{miny},{maxx},{maxy},{OUTPUT_CRS}",
+        "TYPENAMES":    WFS_LAYER,
+        "SRSNAME":      RD_CRS,
+        "BBOX":         f"{minx},{miny},{maxx},{maxy},{RD_CRS}",
         "OUTPUTFORMAT": "application/json",
     }
 
-    log.info("WFS ophalen: %s  bbox=(%.0f %.0f %.0f %.0f)", layer, minx, miny, maxx, maxy)
-    resp = requests.get(wfs_url, params=params, timeout=timeout)
-
+    log.info(
+        "WFS ophalen: %s  bbox=(%.0f %.0f %.0f %.0f)",
+        WFS_LAYER, minx, miny, maxx, maxy,
+    )
+    resp = requests.get(WFS_URL, params=params, timeout=timeout)
     if resp.status_code != 200:
         raise RuntimeError(
-            f"WFS verzoek mislukt (HTTP {resp.status_code}): {resp.text[:200]}"
+            f"WFS HTTP {resp.status_code}: {resp.text[:300]}"
         )
 
-    try:
-        wt_gdf = gpd.GeoDataFrame.from_features(resp.json()["features"], crs=OUTPUT_CRS)
-    except Exception as exc:
-        raise RuntimeError(f"Kan WFS-antwoord niet inlezen: {exc}") from exc
-
-    if wt_gdf.empty:
+    data = resp.json()
+    features = data.get("features", [])
+    if not features:
         raise RuntimeError(
-            f"WFS retourneerde geen features voor laag '{layer}' in dit gebied."
+            "WFS retourneerde 0 features voor dit gebied. "
+            "Controleer of de bbox correct is."
         )
 
-    log.info("  %d wijktype-polygonen ontvangen", len(wt_gdf))
-    return wt_gdf
+    wt = gpd.GeoDataFrame.from_features(features, crs=RD_CRS)
+    log.info("  %d wijktype-features ontvangen", len(wt))
+    return wt
 
 
-def detect_type_column(wt_gdf: gpd.GeoDataFrame) -> str:
-    """Return the column in *wt_gdf* that contains the wijktype classification.
+def _attribute_join(
+    gdf: gpd.GeoDataFrame,
+    wt: gpd.GeoDataFrame,
+    bu_col: str,
+) -> gpd.GeoDataFrame:
+    """Join on buurtcode — fast O(n) merge, no geometry operations needed."""
+    # Rename WFS columns to clean output names; keep only what we need
+    rename = {k: v for k, v in WFS_COLS.items() if k in wt.columns and k != "BU_CODE"}
+    wt_slim = wt[["BU_CODE"] + list(rename.keys())].rename(columns=rename)
 
-    Tries common column name patterns; raises ValueError when none is found.
-    """
-    candidates = [
-        "wijktype", "wijktype_naam", "type", "type_naam",
-        "klasse", "typering", "omschrijving",
-    ]
-    cols_lower = {c.lower(): c for c in wt_gdf.columns}
-    for cand in candidates:
-        if cand in cols_lower:
-            return cols_lower[cand]
+    result = gdf.merge(wt_slim, left_on=bu_col, right_on="BU_CODE", how="left")
+    # Drop the redundant WFS buurtcode column
+    if "BU_CODE" in result.columns and "BU_CODE" != bu_col:
+        result = result.drop(columns=["BU_CODE"])
 
-    # Fall back: first non-geometry string column
-    for col in wt_gdf.columns:
-        if col != "geometry" and wt_gdf[col].dtype == object:
-            log.warning("Wijktype-kolom niet herkend — gebruik '%s'", col)
-            return col
+    matched = result["wijktype"].notna().sum()
+    log.info("  Attribuut-join op '%s': %d/%d buurten gematcht", bu_col, matched, len(gdf))
+    return result
 
-    raise ValueError(
-        f"Geen wijktype-kolom gevonden in WFS-laag. "
-        f"Beschikbare kolommen: {list(wt_gdf.columns)}"
+
+def _spatial_join(
+    gdf: gpd.GeoDataFrame,
+    wt: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """Fallback: join via centroid-in-polygon when no BU_CODE column exists."""
+    log.info("  Geen BU_CODE kolom — spatial centroid join als fallback")
+
+    gdf_rd   = gdf.to_crs(RD_CRS) if str(gdf.crs) != RD_CRS else gdf
+    centroids = gdf_rd.copy()
+    centroids["geometry"] = centroids.geometry.centroid
+
+    rename = {k: v for k, v in WFS_COLS.items() if k in wt.columns and k != "BU_CODE"}
+    wt_slim = wt[list(rename.keys()) + ["geometry"]].rename(columns=rename)
+
+    joined = centroids[["geometry"]].sjoin(
+        wt_slim, how="left", predicate="within"
     )
+
+    for col in rename.values():
+        if col in joined.columns:
+            gdf = gdf.copy()
+            gdf[col] = joined[col].values
+
+    matched = gdf["wijktype"].notna().sum() if "wijktype" in gdf.columns else 0
+    log.info("  Spatial join: %d/%d buurten gematcht", matched, len(gdf))
+    return gdf
 
 
 def join_wijktypen(
     gdf: gpd.GeoDataFrame,
-    wfs_url: str = WFS_URL,
-    layer: str = WFS_LAYER,
-    output_col: str = WIJKTYPE_COL,
     timeout: int = 30,
 ) -> gpd.GeoDataFrame:
-    """Add a *wijktype* column to *gdf* via a spatial join with the WFS layer.
+    """Add wijktype columns to *gdf* via the Klimaateffectatlas WFS.
 
-    Strategy
-    --------
-    1. Download wijktypen polygons for the gemeente bounding box via WFS.
-    2. Perform a spatial join (largest-overlap wins) to assign the dominant
-       wijktype to each neighbourhood polygon in *gdf*.
-    3. Return *gdf* with the new column appended.
-
-    The largest-overlap strategy is used because CBS buurt boundaries do not
-    always align exactly with wijktype polygon boundaries.
+    Adds the following columns when available:
+      wijktype          — dominant wijktype label (WijktypeDe)
+      wijktype_1        — primary candidate (Wijktype1)
+      wijktype_1_score  — confidence score (0–1)
+      wijktype_2        — secondary candidate
+      wijktype_2_score  — confidence score
 
     Parameters
     ----------
-    gdf:        CBS neighbourhood GeoDataFrame.
-    output_col: Name of the new column in the output.
+    gdf:     CBS neighbourhood GeoDataFrame filtered to one gemeente.
+    timeout: HTTP request timeout in seconds.
 
     Returns
     -------
-    GeoDataFrame with *output_col* appended.
+    GeoDataFrame with new wijktype columns appended.
+
+    Raises
+    ------
+    RuntimeError  When the WFS request fails.
     """
-    original_crs = gdf.crs
+    # 1. Download features for this municipality's bounding box
+    wt = _fetch_wfs_bbox(gdf, timeout)
 
-    # 1. Fetch
-    wt_gdf = fetch_wijktypen(gdf, wfs_url=wfs_url, layer=layer, timeout=timeout)
-    type_col = detect_type_column(wt_gdf)
-    log.info("  Wijktype-kolom: '%s'  (%d unieke types)", type_col,
-             wt_gdf[type_col].nunique())
-
-    # 2. Align CRS
-    gdf_rd = gdf.to_crs(OUTPUT_CRS) if str(gdf.crs) != OUTPUT_CRS else gdf
-
-    # 3. Spatial join — for each buurt polygon, find overlapping wijktype polygons
-    #    and keep the one with the largest intersection area (dominant type).
-    joined = gpd.overlay(
-        gdf_rd[["geometry"]].reset_index(),
-        wt_gdf[["geometry", type_col]],
-        how="intersection",
-        keep_geom_type=False,
-    )
-    joined["_area"] = joined.geometry.area
-
-    # Pick the wijktype with the largest overlap per buurt
-    dominant = (
-        joined.sort_values("_area", ascending=False)
-        .drop_duplicates(subset=["index"])
-        .set_index("index")[[type_col]]
-        .rename(columns={type_col: output_col})
+    # 2. Find BU_CODE column in gdf for the attribute join
+    bu_col = next(
+        (c for c in ("BU_CODE", "bu_code", "buurtcode", "BuurtCode") if c in gdf.columns),
+        None,
     )
 
-    gdf = gdf.copy()
-    gdf[output_col] = gdf.index.map(dominant[output_col])
+    if bu_col:
+        result = _attribute_join(gdf, wt, bu_col)
+    else:
+        result = _spatial_join(gdf, wt)
 
-    filled    = gdf[output_col].notna().sum()
-    not_filled = gdf[output_col].isna().sum()
-    log.info(
-        "  Wijktype toegewezen: %d buurten ✓  %d zonder match",
-        filled, not_filled,
-    )
-
-    # Restore original CRS if we reprojected
-    if str(gdf.crs) != str(original_crs):
-        gdf = gdf.to_crs(original_crs)
-
-    return gdf
+    return result
