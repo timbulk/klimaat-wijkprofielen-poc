@@ -35,7 +35,7 @@ RD_CRS    = "EPSG:28992"
 # Columns we want to pull from the WFS (subset to keep output clean)
 WFS_COLS = {
     "BU_CODE":    "bu_code_wfs",   # only used for the join, dropped afterwards
-    "WijktypeDe": "wijktype",      # definitive/dominant label
+    "WijktypeDe": "wijktype_definitief",      # definitive/dominant label
     "Wijktype1":  "wijktype_1",    # primary candidate
     "Beoordelin": "wijktype_1_score",
     "Wijktype2":  "wijktype_2",    # secondary candidate
@@ -96,7 +96,7 @@ def _attribute_join(
     if "BU_CODE" in result.columns and "BU_CODE" != bu_col:
         result = result.drop(columns=["BU_CODE"])
 
-    matched = result["wijktype"].notna().sum()
+    matched = result["wijktype_definitief"].notna().sum()
     log.info("  Attribuut-join op '%s': %d/%d buurten gematcht", bu_col, matched, len(gdf))
     return result
 
@@ -136,7 +136,7 @@ def join_wijktypen(
     """Add wijktype columns to *gdf* via the Klimaateffectatlas WFS.
 
     Adds the following columns when available:
-      wijktype          — dominant wijktype label (WijktypeDe)
+      wijktype_definitief — definitief wijktype label (WijktypeDe)
       wijktype_1        — primary candidate (Wijktype1)
       wijktype_1_score  — confidence score (0–1)
       wijktype_2        — secondary candidate
