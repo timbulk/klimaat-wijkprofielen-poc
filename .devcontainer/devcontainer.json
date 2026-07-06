@@ -1,0 +1,33 @@
+{
+  "name": "Klimaat Wijkprofielen POC",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+
+  "onCreateCommand": "sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin libgdal-dev python3-gdal",
+  "postCreateCommand": "pip install --quiet -r requirements.txt",
+
+  "forwardPorts": [8501],
+  "portsAttributes": {
+    "8501": {
+      "label": "Streamlit app",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}
