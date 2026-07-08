@@ -463,6 +463,10 @@ def _ensure_georeferenced(
                 ds.crs = rasterio.CRS.from_string(crs_str)
             if missing_transform:
                 ds.transform = from_bounds(minx, miny, maxx, maxy, ds.width, ds.height)
+        # Ensure nodata=0 is set for uint8 rasters (KEA classified layers use 0 for water/outside)
+        if ds.nodata is None and ds.dtypes[0] == "uint8":
+            ds.nodata = 0
+            log.debug("Nodata=0 ingesteld voor uint8 raster")
 
 
 def _write_georeferenced_from_image(
@@ -505,6 +509,11 @@ def _write_georeferenced_from_image(
     height, width = arr.shape
     transform     = from_bounds(minx, miny, maxx, maxy, width, height)
 
+    # Attempt to detect the nodata value from the image:
+    # WMS layers like hitteeiland use 0 for water/outside-area pixels.
+    # We preserve the nodata tag so rasterstats can exclude these pixels.
+    _nodata_val = 0 if arr.min() == 0 and arr.dtype == np.uint8 else None
+
     with rasterio.open(
         output_path,
         "w",
@@ -515,5 +524,6 @@ def _write_georeferenced_from_image(
         dtype=arr.dtype,
         crs=rasterio.CRS.from_string(crs_str),
         transform=transform,
+        nodata=_nodata_val,
     ) as ds:
         ds.write(arr, 1)
