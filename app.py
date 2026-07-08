@@ -354,10 +354,10 @@ def _render_uitleg() -> None:
         "Elke klasse staat voor een temperatuurverhoging t.o.v. het buitengebied op een warme zomerdag:"
     )
     import pandas as _pd
+    _interp = (["Vrijwel geen effect"] * 2 + ["Licht effect"] * 3
+               + ["Sterk effect"] * 3 + ["Zeer sterk effect"] * 2)
     _klassen_df = _pd.DataFrame([
-        {"Klasse": k, "Temperatuurverhoging": v,
-         "Interpretatie": ["Vrijwel geen effect"]*2 + ["Licht effect"]*3 + ["Sterk effect"]*3 + ["Zeer sterk effect"]*2
-         [k]}
+        {"Klasse": k, "Temperatuurverhoging": v, "Interpretatie": _interp[k]}
         for k, v in {
             0:"0 – 0,5°C", 1:"0,5 – 1,0°C", 2:"1,0 – 1,5°C",
             3:"1,5 – 2,0°C", 4:"2,0 – 2,5°C", 5:"2,5 – 3,0°C",
