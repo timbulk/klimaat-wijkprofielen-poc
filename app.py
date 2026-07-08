@@ -284,6 +284,163 @@ def make_choropleth(
     return m
 
 
+
+def _render_uitleg() -> None:
+    """Render the explanation tab."""
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.patches import Polygon as MplPolygon
+    from matplotlib.path import Path as MplPath
+
+    st.header("Hoe werkt de analyse?")
+    st.markdown(
+        "Deze tool verrijkt CBS-buurten met klimaatdata door per buurt "
+        "**zonal statistics** te berekenen. "
+        "Hieronder leggen we stap voor stap uit hoe dat werkt."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            "### \U00000031\ufe0f\u20e3 CBS buurtvlakken\n\n"
+            "De CBS Wijk- en Buurtenkaart bevat alle buurtgrenzen als polygonen. "
+            "Elke polygoon stelt \xe9\xe9n buurt voor."
+        )
+        st.caption("\U0001f5fa\ufe0f Buurtpolygoon \u2014 bijv. *Woensel-Noord* in Eindhoven")
+    with c2:
+        st.markdown(
+            "### \U00000032\ufe0f\u20e3 WMS rasterlaag\n\n"
+            "De Klimaateffectatlas levert klimaatdata als een raster: een grid waarbij "
+            "elke cel een meetwaarde heeft, bijv. gevoelstemperatuur in \xb0C."
+        )
+        st.caption("\U0001f321\ufe0f Raster \u2014 elke pixel = meetwaarde voor dat stukje grond")
+    with c3:
+        st.markdown(
+            "### \U00000033\ufe0f\u20e3 Zonal statistics\n\n"
+            "Per buurt worden alle rasterwaarden **binnen** de polygoon verzameld "
+            "en samengevat: gemiddelde, maximum, standaarddeviatie, etc."
+        )
+        st.caption("\U0001f4ca Uitkomst \u2014 bijv. gemiddelde hitte = 34.2 \xb0C")
+
+    st.divider()
+    st.subheader("Visueel voorbeeld: hitte-eiland effect")
+    st.markdown(
+        "Stel: we analyseren het **hitte-eiland effect** voor een buurt in Eindhoven. "
+        "Het raster heeft een resolutie van 50 m \u2014 elke pixel dekt 50\xd750 meter."
+    )
+
+    np.random.seed(42)
+    G = 12
+    x = np.linspace(0, 1, G); y = np.linspace(0, 1, G)
+    xx, yy = np.meshgrid(x, y)
+    raster = (28
+        + 8 * np.exp(-((xx-0.65)**2 + (yy-0.55)**2) / 0.08)
+        + 4 * np.exp(-((xx-0.30)**2 + (yy-0.40)**2) / 0.12)
+        + np.random.normal(0, 0.6, (G, G)))
+    raster = np.clip(raster, 26, 40)
+
+    poly = np.array([
+        [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
+        [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
+    ])
+    path  = MplPath(poly)
+    cw    = 1.0 / G
+    inside = np.array([
+        [path.contains_point(((c+.5)*cw,(r+.5)*cw)) for c in range(G)]
+        for r in range(G)
+    ])
+
+    vals   = raster[inside]
+    n_pix  = len(vals)
+    mu     = vals.mean()
+    mx     = vals.max()
+    sd     = vals.std()
+
+    cmap_h = LinearSegmentedColormap.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    fig.patch.set_facecolor("#0e1117")
+
+    panel_titles = [
+        "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
+        "\u2461 Buurtvlak over raster",
+        "\u2462 Pixels binnen de buurt",
+    ]
+    for ax, t in zip(axes, panel_titles):
+        ax.set_facecolor("#0e1117"); ax.set_title(t, color="white", fontsize=9, pad=8)
+        ax.set_xlim(0,1); ax.set_ylim(0,1); ax.set_aspect("equal")
+        ax.tick_params(colors="white", labelsize=7)
+        for sp in ax.spines.values(): sp.set_edgecolor("#444")
+
+    im = axes[0].imshow(np.flipud(raster), extent=[0,1,0,1],
+                        cmap=cmap_h, vmin=26, vmax=40, origin="upper")
+    cb = fig.colorbar(im, ax=axes[0], fraction=.046, pad=.04)
+    cb.set_label("\xb0C", color="white", fontsize=8)
+    cb.ax.yaxis.set_tick_params(color="white")
+    plt.setp(cb.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
+
+    axes[1].imshow(np.flipud(raster), extent=[0,1,0,1],
+                   cmap=cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
+    axes[1].add_patch(MplPolygon(poly, closed=True,
+                                 edgecolor="#00cfff", facecolor="none", lw=2))
+    axes[1].text(0.5, 0.5, "Buurt\nWoensel-Noord",
+                 ha="center", va="center", color="white", fontsize=8, fontweight="bold",
+                 bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
+
+    grey = np.full_like(raster, 27.0)
+    axes[2].imshow(np.flipud(grey), extent=[0,1,0,1],
+                   cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
+    axes[2].imshow(np.flipud(np.ma.masked_where(~inside, raster)), extent=[0,1,0,1],
+                   cmap=cmap_h, vmin=26, vmax=40, origin="upper")
+    axes[2].add_patch(MplPolygon(poly, closed=True,
+                                 edgecolor="#00cfff", facecolor="none", lw=2))
+    axes[2].text(0.97, 0.03,
+                 f"n = {n_pix} pixels\nmean = {mu:.1f} \xb0C\nmax  = {mx:.1f} \xb0C\nstd  = {sd:.1f} \xb0C",
+                 transform=axes[2].transAxes, ha="right", va="bottom",
+                 color="white", fontsize=8, fontfamily="monospace",
+                 bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
+
+    fig.tight_layout(pad=1.5)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+    st.divider()
+    st.subheader("Voorbeeld-uitkomst in de data")
+    st.markdown(
+        f"Na de analyse krijgt elke buurt nieuwe kolommen in de output GeoPackage:\n\n"
+        f"| Kolom | Waarde | Betekenis |\n"
+        f"|---|---|---|\n"
+        f"| `hitteeiland_mean` | **{mu:.1f} \xb0C** | Gemiddelde gevoelstemperatuur |\n"
+        f"| `hitteeiland_max` | **{mx:.1f} \xb0C** | Warmste pixel in de buurt |\n"
+        f"| `hitteeiland_std` | **{sd:.1f} \xb0C** | Spreiding \u2014 maat voor ruimtelijke ongelijkheid |\n"
+        f"| `hitteeiland_count` | **{n_pix}** | Aantal pixels \u2014 proxy voor buurtoppervlak |\n"
+        f"| `wijktype_definitief` | `Tuinstad middelhoogbouw` | Stedenbouwkundig type (via WFS) |\n\n"
+        "> \U0001f4a1 **Tip:** Een hoge **max** bij lage **std** wijst op een lokale hitteplek "
+        "(bijv. een heet parkeerterrein). Een hoge **std** duidt op een gemengde buurt "
+        "met koele groenstroken \xe9n hete verharding naast elkaar."
+    )
+
+    with st.expander("\U0001f527 Technische details"):
+        st.markdown(
+            "**Implementatie**\n\n"
+            "- Bibliotheek: [`rasterstats`](https://pythonhosted.org/rasterstats/)\n"
+            "- Rasterdata: live WMS GetMap download als GeoTIFF (EPSG:28992)\n"
+            "- Buffer: 500 m rondom gemeente-bbox (instelbaar)\n"
+            "- Resolutie: standaard 50 m/pixel (instelbaar)\n"
+            "- Pixelgewicht: pixels op de polygoonrand worden gewogen op overlap\n\n"
+            "**Statistische maatstaven**\n\n"
+            "| Statistiek | Wanneer nuttig? |\n"
+            "|---|---|\n"
+            "| `mean` | Algemeen klimaatniveau van de buurt |\n"
+            "| `max` | Worst-case hotspots |\n"
+            "| `std` | Interne variatie / ruimtelijke ongelijkheid |\n"
+            "| `count` | Proxy voor buurtoppervlak |\n"
+            "| `pct_above_X` | % buurt boven drempelwaarde (bijv. 35\xb0C) |\n\n"
+            "**Wijktypen:** join via `BU_CODE` op WFS `wijktypen_buurten` "
+            "van de Klimaateffectatlas."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -516,6 +673,12 @@ with st.sidebar:
         use_container_width=True,
         disabled=(not gemeente or _no_layers),
     )
+
+
+_tab_analyse, _tab_uitleg = st.tabs(["🔬 Analyse", "📖 Hoe werkt het?"])
+
+with _tab_uitleg:
+    _render_uitleg()
 
 # ---------------------------------------------------------------------------
 # Main content
