@@ -230,9 +230,24 @@ def make_choropleth(
     m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
     Fullscreen().add_to(m)
 
-    is_cat = gdf_wgs[column].dtype == object or str(gdf_wgs[column].dtype) == "category"
+    # _temp_klasse columns: ordinal strings -> warm choropleth via numeric proxy
+    _is_temp_klasse = column.endswith("_temp_klasse")
+    is_cat = (not _is_temp_klasse) and (
+        gdf_wgs[column].dtype == object or str(gdf_wgs[column].dtype) == "category"
+    )
     extra      = [c for c in (tooltip_extra or []) if c in gdf_wgs.columns and c != column]
     tip_fields = [column] + extra
+
+    # For temp_klasse: add a numeric proxy column for the choropleth color scale
+    _HITTE_REV = {v: k for k, v in HITTE_KLASSEN.items()}
+    if _is_temp_klasse:
+        _num_col = f"__klasse_num_{column}"
+        gdf_wgs = gdf_wgs.copy()
+        gdf_wgs[_num_col] = gdf_wgs[column].map(
+            lambda v: _HITTE_REV.get(v, float("nan"))
+        )
+        # Show the label in tooltip, not the number
+        tip_fields = [column] + extra
 
     if is_cat:
         cats      = sorted(gdf_wgs[column].dropna().unique().tolist())
@@ -272,17 +287,24 @@ def make_choropleth(
     else:
         _plot_data = gdf_wgs[[column]].reset_index()
         _plot_data[column] = pd.to_numeric(_plot_data[column], errors="coerce")
+        _choro_col = _num_col if _is_temp_klasse else column
+        _choro_label = (
+            f"{column} (klasse 0–9 = temperatuurverhoging)"
+            if _is_temp_klasse else column
+        )
+        _plot_data = gdf_wgs[[_choro_col]].reset_index()
+        _plot_data[_choro_col] = pd.to_numeric(_plot_data[_choro_col], errors="coerce")
         folium.Choropleth(
             geo_data=gdf_wgs.__geo_interface__,
             data=_plot_data,
-            columns=["index", column],
+            columns=["index", _choro_col],
             key_on="feature.id",
             fill_color="YlOrRd",
             fill_opacity=0.7,
             line_opacity=0.3,
             nan_fill_color="#cccccc",
-            legend_name=column,
-            name=column,
+            legend_name=_choro_label,
+            name=_choro_label,
         ).add_to(m)
         folium.GeoJson(
             gdf_wgs,
@@ -760,7 +782,9 @@ _prev_gem   = st.session_state.get("gemeente", "")
 if _prev_gdf is not None:
     _added      = [c for c in _prev_gdf.columns if c not in _prev_cols and c != "geometry"]
     _wt_cols    = [c for c in _added if c.startswith("wijktype")]
-    _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c and not c.startswith("wijktype")]
+    _label_cols = [c for c in _added if c.endswith("_temp_klasse")]
+    _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c
+                   and not c.startswith("wijktype") and not c.endswith("_temp_klasse")]
     _thresh_cols= [c for c in _added if "pct_above" in c]
     _norm_cols  = [c for c in _added if c.endswith("_norm")]
 
@@ -813,15 +837,17 @@ if _prev_gdf is not None:
             use_container_width=True,
             height=350,
             column_config={
-                c: st.column_config.NumberColumn(c, format="%.2f")
-                for c in _stat_cols + _thresh_cols + _norm_cols
-                if c in _df_disp.columns
+                **{c: st.column_config.NumberColumn(c, format="%.2f")
+                   for c in _stat_cols + _thresh_cols + _norm_cols
+                   if c in _df_disp.columns},
+                **{c: st.column_config.TextColumn(c)
+                   for c in _label_cols if c in _df_disp.columns},
             },
         )
 
     # Kaart
     st.subheader("\U0001f5fa\ufe0f Kaart")
-    _map_opts = _wt_col + _stat_cols + _thresh_cols + _norm_cols
+    _map_opts = _wt_col + _label_cols + _stat_cols + _thresh_cols + _norm_cols
     if _map_opts:
         _map_col = st.selectbox("Toon op kaart", _map_opts, index=0, key="map_col_select")
         _tooltip_extra = [c for c in ["wijktype_definitief"] if c in _prev_gdf.columns and c != _map_col]
