@@ -292,7 +292,14 @@ def compute_zonal_stats(
         ", ".join(stats), raster_path.name, prefix,
     )
 
-    results = zonal_stats(gdf, str(raster_path), stats=stats, nodata=None, all_touched=False)
+    # Read nodata value from the raster file so pixels tagged as nodata
+    # (e.g. water / outside study area = 0 in the KEA hitteeiland layer)
+    # are excluded from all statistics instead of being counted as real values.
+    import rasterio as _rio
+    with _rio.open(str(raster_path)) as _src:
+        _nodata = _src.nodata  # e.g. 0.0 for hitteeiland
+    results = zonal_stats(gdf, str(raster_path), stats=stats,
+                          nodata=_nodata, all_touched=False)
     gdf = gdf.copy()
     for stat in stats:
         col = f"{prefix}_{stat}"
