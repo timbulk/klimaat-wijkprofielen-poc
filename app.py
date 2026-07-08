@@ -986,7 +986,7 @@ try:
                     if src_col in gdf.columns:
                         def _to_klasse(v, _hk=HITTE_KLASSEN):
                             try:
-                                return _hk.get(int(round(float(v))), "?")
+                                return _hk.get(min(9, max(0, int(round(float(v))))), "?")
                             except (TypeError, ValueError):
                                 return None
                         gdf[f"{prefix}_temp_klasse"] = gdf[src_col].map(_to_klasse)
