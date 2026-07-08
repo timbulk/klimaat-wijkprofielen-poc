@@ -12,3 +12,4 @@ streamlit
 folium
 streamlit-folium
 requests
+openpyxl
