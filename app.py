@@ -51,7 +51,31 @@ WMS_LAYERS_FALLBACK = {
     "Stedelijke hitte (LST)":             "hitteeiland_r_lst",
 }
 
-STATS_OPTIONS = ["mean", "max", "min", "std", "count", "sum", "median"]
+STATS_OPTIONS = ["mean", "max", "min", "std", "count", "sum", "median", "majority"]
+
+# Hitte-eiland klassen: pixelwaarde (0-9) -> temperatuurverhoging t.o.v. buitengebied
+HITTE_KLASSEN = {
+    0: "0 – 0,5°C",
+    1: "0,5 – 1,0°C",
+    2: "1,0 – 1,5°C",
+    3: "1,5 – 2,0°C",
+    4: "2,0 – 2,5°C",
+    5: "2,5 – 3,0°C",
+    6: "3,0 – 3,5°C",
+    7: "3,5 – 4,0°C",
+    8: "4,0 – 4,5°C",
+    9: "≥ 4,5°C",
+}
+
+# Lagen waarvan we weten dat de pixelwaarden klassen zijn (niet absolute meetwaarden)
+WMS_CLASSIFIED_LAYERS = {
+    "hitteeiland",
+    "sociale_kwetsbaarheid_hitte",
+    "Nachthitte_WarmeAvond20gr",
+    "Nachthitte_WarmeAvond24gr",
+    "Nachthitte_WarmeNacht20gr",
+    "Nachthitte_WarmeNacht24gr",
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -323,6 +347,34 @@ def _render_uitleg() -> None:
         )
         st.caption("\U0001f4ca Uitkomst \u2014 bijv. gemiddelde hitte = 34.2 \xb0C")
 
+    st.divider()
+    st.subheader("🌡️ Hitte-eiland klassen")
+    st.markdown(
+        "De **hitteeiland**-laag uit de Klimaateffectatlas bevat geclassificeerde waarden (0–9). "
+        "Elke klasse staat voor een temperatuurverhoging t.o.v. het buitengebied op een warme zomerdag:"
+    )
+    import pandas as _pd
+    _klassen_df = _pd.DataFrame([
+        {"Klasse": k, "Temperatuurverhoging": v,
+         "Interpretatie": ["Vrijwel geen effect"]*2 + ["Licht effect"]*3 + ["Sterk effect"]*3 + ["Zeer sterk effect"]*2
+         [k]}
+        for k, v in {
+            0:"0 – 0,5°C", 1:"0,5 – 1,0°C", 2:"1,0 – 1,5°C",
+            3:"1,5 – 2,0°C", 4:"2,0 – 2,5°C", 5:"2,5 – 3,0°C",
+            6:"3,0 – 3,5°C", 7:"3,5 – 4,0°C", 8:"4,0 – 4,5°C",
+            9:"≥ 4,5°C"
+        }.items()
+    ])
+    st.dataframe(_klassen_df, hide_index=True, use_container_width=True,
+        column_config={
+            "Klasse": st.column_config.NumberColumn(width="small"),
+            "Temperatuurverhoging": st.column_config.TextColumn(width="medium"),
+            "Interpretatie": st.column_config.TextColumn(width="medium"),
+        })
+    st.markdown(
+        "> 💡 De tool voegt automatisch een kolom **`{prefix}_temp_klasse`** toe "
+        "met de leesbare temperatuurverhoging per buurt, naast de ruwe klassewaarde."
+    )
     st.divider()
     st.subheader("Visueel voorbeeld: hitte-eiland effect")
     st.markdown(
@@ -631,7 +683,7 @@ with st.sidebar:
     selected_stats = st.multiselect(
         "Te berekenen statistieken",
         STATS_OPTIONS,
-        default=cfg.get("stats", ["mean", "max", "std", "count"]),
+        default=cfg.get("stats", ["majority", "max", "mean"]),
     )
 
     use_threshold = st.checkbox("Drempelwaarde berekenen", value=False)
@@ -895,6 +947,14 @@ try:
                 gdf = _enrich_from_raster(
                     gdf, tmp_path, prefix, selected_stats, threshold, normalize,
                 )
+                # Voeg leesbare temperatuurlabels toe voor geclassificeerde lagen
+                if wms_layer_name in WMS_CLASSIFIED_LAYERS:
+                    maj_col = f"{prefix}_majority"
+                    if maj_col in gdf.columns:
+                        gdf[f"{prefix}_temp_klasse"] = (
+                            gdf[maj_col].map(lambda v: HITTE_KLASSEN.get(int(v), "?")
+                                            if v is not None and str(v) != "nan" else None)
+                        )
     else:
         local_path = PROJECT_ROOT / local_raster_path
         if not local_path.exists():
