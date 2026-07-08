@@ -515,6 +515,256 @@ def _render_uitleg() -> None:
         )
 
 
+
+# CBS column names for spatial join matching
+_CBS_GEMEENTE_COLS = ("gemeentenaam", "GM_NAAM")
+_CBS_BUURT_COLS   = ("BU_NAAM", "buurtnaam")
+_CBS_WIJK_COLS    = ("WK_NAAM", "wijknaam")
+
+
+def _normalise(s) -> str:
+    """Lowercase + strip for fuzzy name matching."""
+    if s is None:
+        return ""
+    return str(s).strip().lower()
+
+
+def _join_excel_to_gdf(
+    gdf: gpd.GeoDataFrame,
+    excel_df: pd.DataFrame,
+    left_key: str,
+    right_key: str,
+    value_cols: list[str],
+    overwrite: bool = False,
+) -> tuple[gpd.GeoDataFrame, dict]:
+    """Join *value_cols* from *excel_df* onto *gdf* via normalised name match.
+
+    Returns (enriched_gdf, stats_dict).
+    """
+    gdf = gdf.copy()
+
+    # Build lookup: normalised name -> row index in excel_df
+    excel_df = excel_df.copy()
+    excel_df["__key__"] = excel_df[right_key].map(_normalise)
+
+    # For each value column: merge
+    stats = {"matched": 0, "unmatched": 0, "skipped_existing": []}
+
+    for col in value_cols:
+        target_col = col
+        if target_col in gdf.columns and not overwrite:
+            stats["skipped_existing"].append(col)
+            continue
+        lookup = excel_df.set_index("__key__")[col].to_dict()
+        gdf[target_col] = gdf[left_key].map(_normalise).map(lookup)
+
+    # Count matches (use first value_col that was actually added)
+    added = [c for c in value_cols if c not in stats["skipped_existing"]]
+    if added:
+        stats["matched"]   = gdf[added[0]].notna().sum()
+        stats["unmatched"] = gdf[added[0]].isna().sum()
+
+    return gdf, stats
+
+
+def _render_excel_join() -> None:
+    """Render the Excel enrichment tab."""
+    st.header("\U0001f4ce Excel verrijking")
+    st.markdown(
+        "Koppel een eigen Excel-bestand aan de CBS-buurtdata. "
+        "Vereiste: de Excel bevat een kolom met **gemeente-** of **buurt-/wijknamen** "
+        "die overeenkomen met de CBS-data. Je kiest zelf welke kolommen worden toegevoegd."
+    )
+
+    # ?? Stap 1: GeoPackage bron ???????????????????????????????????????????????
+    st.subheader("\U0001f4e6 Stap 1 \u2014 Kies de CBS-data")
+    _src = st.radio(
+        "Bron",
+        ["Gebruik resultaat van huidige analyse", "Upload een bestaand GeoPackage"],
+        horizontal=True,
+    )
+
+    _base_gdf: gpd.GeoDataFrame | None = None
+
+    if _src == "Gebruik resultaat van huidige analyse":
+        _base_gdf = st.session_state.get("gdf")
+        if _base_gdf is None:
+            st.info(
+                "\u2139\ufe0f Voer eerst een analyse uit via het tabblad **\U0001f52c Analyse**.",
+                icon="\u2139\ufe0f",
+            )
+        else:
+            st.success(
+                f"\u2705 Analyse-resultaat geladen: "
+                f"**{len(_base_gdf)}** rijen \u00b7 {len(_base_gdf.columns)} kolommen"
+            )
+    else:
+        _gpkg_upload = st.file_uploader(
+            "Upload GeoPackage (.gpkg)",
+            type=["gpkg"],
+            key="excel_gpkg_upload",
+        )
+        if _gpkg_upload:
+            import tempfile
+            _tmp = Path(tempfile.mktemp(suffix=".gpkg"))
+            _tmp.write_bytes(_gpkg_upload.read())
+            try:
+                _base_gdf = gpd.read_file(_tmp, engine="pyogrio")
+                st.success(f"\u2705 GeoPackage geladen: **{len(_base_gdf)}** rijen")
+            except Exception as _e:
+                st.error(f"\u274c GeoPackage kan niet worden gelezen: {_e}")
+            finally:
+                _tmp.unlink(missing_ok=True)
+
+    if _base_gdf is None:
+        st.stop()
+
+    # ?? Stap 2: Excel uploaden ????????????????????????????????????????????????
+    st.divider()
+    st.subheader("\U0001f4c4 Stap 2 \u2014 Upload Excel-bestand")
+    _xl_file = st.file_uploader(
+        "Upload Excel (.xlsx of .xls)",
+        type=["xlsx", "xls"],
+        key="excel_upload",
+    )
+    if _xl_file is None:
+        st.stop()
+
+    try:
+        _xl_df = pd.read_excel(_xl_file)
+    except Exception as _e:
+        st.error(f"\u274c Excel kan niet worden gelezen: {_e}")
+        st.stop()
+
+    st.success(f"\u2705 Excel geladen: **{len(_xl_df)}** rijen \u00b7 **{len(_xl_df.columns)}** kolommen")
+    with st.expander("Voorbeeld Excel-data (eerste 5 rijen)"):
+        st.dataframe(_xl_df.head(), use_container_width=True)
+
+    # ?? Stap 3: Kolom-koppeling ???????????????????????????????????????????????
+    st.divider()
+    st.subheader("\U0001f517 Stap 3 \u2014 Koppelkolommen instellen")
+
+    _xl_cols = list(_xl_df.columns)
+    _cbs_cols = [c for c in _base_gdf.columns if c != "geometry"]
+
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.markdown("**CBS-kolom (links)**")
+        # Smart default: prefer buurt/wijk name columns
+        _cbs_default_candidates = [
+            c for c in _cbs_cols
+            if any(k in c.lower() for k in ("naam", "name", "bu_naam", "wk_naam"))
+        ]
+        _cbs_default = _cbs_default_candidates[0] if _cbs_default_candidates else _cbs_cols[0]
+        _left_key = st.selectbox(
+            "Koppelkolom uit CBS-data",
+            _cbs_cols,
+            index=_cbs_cols.index(_cbs_default) if _cbs_default in _cbs_cols else 0,
+            help="De kolom in de CBS-data waarop gekoppeld wordt (bijv. BU_NAAM of gemeentenaam).",
+        )
+
+    with col_r:
+        st.markdown("**Excel-kolom (rechts)**")
+        # Smart default: prefer columns whose name matches _left_key
+        _xl_default_candidates = [
+            c for c in _xl_cols
+            if _normalise(c) in (_normalise(_left_key), "naam", "buurtnaam", "wijknaam", "gemeentenaam")
+        ]
+        _xl_default = _xl_default_candidates[0] if _xl_default_candidates else _xl_cols[0]
+        _right_key = st.selectbox(
+            "Koppelkolom uit Excel",
+            _xl_cols,
+            index=_xl_cols.index(_xl_default) if _xl_default in _xl_cols else 0,
+            help="De kolom in de Excel met overeenkomstige namen (bijv. buurtnaam).",
+        )
+
+    # Show match preview
+    _cbs_keys  = set(_base_gdf[_left_key].map(_normalise))
+    _xl_keys   = set(_xl_df[_right_key].map(_normalise))
+    _matched   = _cbs_keys & _xl_keys
+    _unmatched = _cbs_keys - _xl_keys
+    st.caption(
+        f"\U0001f50d Match-preview: **{len(_matched)}** van {len(_cbs_keys)} CBS-rijen "
+        f"gevonden in Excel \u00b7 {len(_unmatched)} niet gevonden"
+    )
+    if _unmatched and len(_unmatched) <= 10:
+        st.caption("Niet gevonden: " + ", ".join(f"`{v}`" for v in sorted(_unmatched)[:10]))
+
+    # ?? Stap 4: Kolommen selecteren ???????????????????????????????????????????
+    st.divider()
+    st.subheader("\U0001f4ca Stap 4 \u2014 Kies te koppelen kolommen")
+    _non_key_cols = [c for c in _xl_cols if c != _right_key]
+    _value_cols = st.multiselect(
+        "Kolommen uit Excel om toe te voegen",
+        _non_key_cols,
+        default=_non_key_cols[:min(5, len(_non_key_cols))],
+        help="Selecteer de kolommen die je wil toevoegen aan de CBS-data.",
+    )
+
+    _existing = [c for c in _value_cols if c in _base_gdf.columns]
+    _overwrite = False
+    if _existing:
+        st.warning(
+            f"\u26a0\ufe0f Kolommen al aanwezig in CBS-data: {', '.join(f'`{c}`' for c in _existing)}"
+        )
+        _overwrite = st.checkbox("Bestaande kolommen overschrijven", value=False)
+
+    if not _value_cols:
+        st.info("Selecteer minimaal \xe9\xe9n kolom om te koppelen.")
+        st.stop()
+
+    # ?? Stap 5: Koppelen ?????????????????????????????????????????????????????
+    st.divider()
+    if st.button("\U0001f517 Koppelen uitvoeren", type="primary", use_container_width=True):
+        with st.spinner("Koppelen\u2026"):
+            _result_gdf, _stats = _join_excel_to_gdf(
+                _base_gdf, _xl_df, _left_key, _right_key, _value_cols, _overwrite,
+            )
+
+        st.success(
+            f"\u2705 Gekoppeld: **{_stats['matched']}** rijen gematcht \u00b7 "
+            f"{_stats['unmatched']} niet gematcht"
+        )
+        if _stats["skipped_existing"]:
+            st.info(
+                "Overgeslagen (al aanwezig): "
+                + ", ".join(f"`{c}`" for c in _stats["skipped_existing"])
+            )
+
+        # Show result table
+        _show_cols = (
+            [_left_key]
+            + [c for c in _value_cols if c not in _stats["skipped_existing"]]
+        )
+        st.dataframe(
+            _result_gdf[_show_cols].head(50),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Download
+        _gpkg_bytes = gdf_to_gpkg_bytes(_result_gdf)
+        _fname = f"excel_verrijkt_{_left_key}.gpkg"
+        st.download_button(
+            label="\u2b07\ufe0f Download verrijkt GeoPackage",
+            data=_gpkg_bytes,
+            file_name=_fname,
+            mime="application/geopackage+sqlite3",
+            type="primary",
+            use_container_width=True,
+        )
+
+        # Also update session_state so the analyse tab shows updated data
+        if _src == "Gebruik resultaat van huidige analyse":
+            st.session_state["gdf"] = _result_gdf
+            st.session_state["gpkg_bytes"] = _gpkg_bytes
+            st.caption(
+                "\U0001f4a1 Analyse-resultaat bijgewerkt met Excel-data. "
+                "Bekijk de kaart en tabel in het **\U0001f52c Analyse** tabblad."
+            )
+
+
+
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
@@ -749,10 +999,13 @@ with st.sidebar:
     )
 
 
-_tab_analyse, _tab_uitleg = st.tabs(["🔬 Analyse", "📖 Hoe werkt het?"])
+_tab_analyse, _tab_uitleg, _tab_excel = st.tabs(["🔬 Analyse", "📖 Hoe werkt het?", "📎 Excel verrijking"])
 
 with _tab_uitleg:
     _render_uitleg()
+
+with _tab_excel:
+    _render_excel_join()
 
 # ---------------------------------------------------------------------------
 # Main content
