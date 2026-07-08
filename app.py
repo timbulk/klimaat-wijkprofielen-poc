@@ -617,7 +617,7 @@ def _render_excel_join() -> None:
                 _tmp.unlink(missing_ok=True)
 
     if _base_gdf is None:
-        st.stop()
+        return
 
     # ?? Stap 2: Excel uploaden ????????????????????????????????????????????????
     st.divider()
@@ -628,13 +628,13 @@ def _render_excel_join() -> None:
         key="excel_upload",
     )
     if _xl_file is None:
-        st.stop()
+        return
 
     try:
         _xl_df = pd.read_excel(_xl_file)
     except Exception as _e:
         st.error(f"\u274c Excel kan niet worden gelezen: {_e}")
-        st.stop()
+        return
 
     st.success(f"\u2705 Excel geladen: **{len(_xl_df)}** rijen \u00b7 **{len(_xl_df.columns)}** kolommen")
     with st.expander("Voorbeeld Excel-data (eerste 5 rijen)"):
@@ -711,7 +711,7 @@ def _render_excel_join() -> None:
 
     if not _value_cols:
         st.info("Selecteer minimaal \xe9\xe9n kolom om te koppelen.")
-        st.stop()
+        return
 
     # ?? Stap 5: Koppelen ?????????????????????????????????????????????????????
     st.divider()
