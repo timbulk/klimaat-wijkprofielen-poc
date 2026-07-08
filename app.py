@@ -944,16 +944,29 @@ try:
                 status.info(f"📐 ({idx + 1}/{n_layers}) Zonal statistics: `{wms_layer_name}`…")
                 # Gebruik de laagnaam als prefix (max 20 tekens)
                 prefix = wms_layer_name[:20]
+                # Voor geclassificeerde lagen: zorg dat majority altijd wordt berekend
+                stats_for_layer = list(selected_stats)
+                if wms_layer_name in WMS_CLASSIFIED_LAYERS and "majority" not in stats_for_layer:
+                    stats_for_layer = stats_for_layer + ["majority"]
                 gdf = _enrich_from_raster(
-                    gdf, tmp_path, prefix, selected_stats, threshold, normalize,
+                    gdf, tmp_path, prefix, stats_for_layer, threshold, normalize,
                 )
                 # Voeg leesbare temperatuurlabels toe voor geclassificeerde lagen
                 if wms_layer_name in WMS_CLASSIFIED_LAYERS:
-                    maj_col = f"{prefix}_majority"
-                    if maj_col in gdf.columns:
-                        gdf[f"{prefix}_temp_klasse"] = (
-                            gdf[maj_col].map(lambda v: HITTE_KLASSEN.get(int(v), "?")
-                                            if v is not None and str(v) != "nan" else None)
+                    # Gebruik majority als die er is, anders mean afgerond
+                    src_col = f"{prefix}_majority"
+                    if src_col not in gdf.columns:
+                        src_col = f"{prefix}_mean"
+                    if src_col in gdf.columns:
+                        def _to_klasse(v, _hk=HITTE_KLASSEN):
+                            try:
+                                return _hk.get(int(round(float(v))), "?")
+                            except (TypeError, ValueError):
+                                return None
+                        gdf[f"{prefix}_temp_klasse"] = gdf[src_col].map(_to_klasse)
+                        status.info(
+                            f"🌡️ Temperatuurklassen toegevoegd: "
+                            f"`{prefix}_temp_klasse`"
                         )
     else:
         local_path = PROJECT_ROOT / local_raster_path
