@@ -829,7 +829,7 @@ if _prev_gdf is not None:
     st.subheader("📊 Statistieken per buurt")
     _name_col = next((c for c in ("buurtnaam", "BU_NAAM", "wijknaam", "WK_NAAM") if c in _prev_gdf.columns), None)
     _wt_col   = _wt_cols  # already computed above, avoids duplicate columns
-    _disp_cols = ([_name_col] if _name_col else []) + _wt_col + _stat_cols + _thresh_cols + _norm_cols
+    _disp_cols = ([_name_col] if _name_col else []) + _wt_col + _label_cols + _stat_cols + _thresh_cols + _norm_cols
     if _disp_cols:
         _df_disp = style_summary_table(_prev_gdf[_disp_cols])
         st.dataframe(
