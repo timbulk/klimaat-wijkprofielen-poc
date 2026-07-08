@@ -1,22 +1,29 @@
-"""test_wms_dtype.py — controleer of de WMS echte meetwaarden of kleurpixels levert."""
+"""test_wms_dtype.py — controleer of de WMS echte meetwaarden of kleurpixels levert.
+
+Gebruik: python3 scripts/test_wms_dtype.py
+Geen CBS-bestand nodig — gebruikt een vaste bbox rond Eindhoven centrum.
+"""
 import sys, tempfile, os
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 
+import numpy as np
 import geopandas as gpd
+from shapely.geometry import box
 import rasterio
 from wms_utils import download_wms_as_geotiff, DEFAULT_WMS_URL
 
-print("CBS laden...")
-gdf = gpd.read_file("data/raw/wijkenbuurten_2023.gpkg", layer="buurten_2023")
-gdf = gdf[gdf["gemeentenaam"] == "Eindhoven"].iloc[:3]
-print(f"  {len(gdf)} buurten als test-bbox")
+# Vaste bbox: Eindhoven centrum (EPSG:28992 RD New)
+# minx, miny, maxx, maxy
+BBOX_RD = (152000, 381000, 156000, 385000)
+gdf = gpd.GeoDataFrame(geometry=[box(*BBOX_RD)], crs="EPSG:28992")
 
+print("WMS downloaden (hitteeiland_r_hitte, 50m resolutie)...")
 with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as f:
     tmp = f.name
 
-print("WMS downloaden...")
 download_wms_as_geotiff(gdf, wms_url=DEFAULT_WMS_URL,
-    layer_name="hitteeiland_r_hitte", resolution_m=50, output_path=tmp)
+    layer_name="hitteeiland_r_hitte", resolution_m=50,
+    buffer_m=0, output_path=tmp)
 
 with rasterio.open(tmp) as src:
     band = src.read(1)
@@ -26,13 +33,13 @@ with rasterio.open(tmp) as src:
     print(f"max    : {band.max():.2f}")
     print(f"mean   : {band.mean():.2f}")
     print()
-    if src.dtypes[0] == "uint8" and src.count >= 3:
-        print("PROBLEEM: RGB rendered image (kleurwaarden 0-255, geen meetwaarden)")
-    elif src.dtypes[0] in ("float32", "float64") and src.count == 1:
-        print("OK: single-band float raster — echte meetwaarden")
-    elif src.count == 1 and band.max() <= 255:
-        print("ONZEKER: 1 band maar bereik 0-255 — mogelijk kleurwaarden als uint8")
+    if src.dtypes[0] in ("float32", "float64") and src.count == 1:
+        print("OK: single-band float raster — echte meetwaarden, zonal stats werkt correct")
+    elif src.count >= 3 or (band.max() <= 255 and band.dtype == np.uint8):
+        print("PROBLEEM: RGB rendered image (kleurwaarden 0-255, geen echte meetwaarden)")
+        print("  -> Overweeg WCS in plaats van WMS")
     else:
-        print("ONBEKEND: controleer dtype en bereik hierboven")
+        print("ONZEKER: controleer dtype en bereik hierboven")
+        print("  Verwacht: float32, 1 band, bereik ~26-42 voor hitte in graden")
 
 os.unlink(tmp)
