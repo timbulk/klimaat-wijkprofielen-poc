@@ -1,4 +1,4 @@
-"""
+﻿"""
 app.py
 ------
 Streamlit web interface for the klimaat-wijkprofielen-poc pipeline.
@@ -569,34 +569,40 @@ def _join_excel_to_gdf(
 
 def _render_excel_join() -> None:
     """Render the Excel enrichment tab."""
-    st.header("\U0001f4ce Excel verrijking")
+    st.header("📎 Excel verrijking")
     st.markdown(
         "Koppel een eigen Excel-bestand aan de CBS-buurtdata. "
         "Vereiste: de Excel bevat een kolom met **gemeente-** of **buurt-/wijknamen** "
         "die overeenkomen met de CBS-data. Je kiest zelf welke kolommen worden toegevoegd."
     )
 
-    # ?? Stap 1: GeoPackage bron ???????????????????????????????????????????????
-    st.subheader("\U0001f4e6 Stap 1 \u2014 Kies de CBS-data")
+    # -- Stap 1: GeoPackage bron -----------------------------------------------
+    st.subheader("📦 Stap 1 — Kies de CBS-data")
     _src = st.radio(
         "Bron",
         ["Gebruik resultaat van huidige analyse", "Upload een bestaand GeoPackage"],
         horizontal=True,
+        key="excel_src_radio",
     )
 
-    _base_gdf: gpd.GeoDataFrame | None = None
+    # Clear cached gpkg when user switches source
+    if st.session_state.get("_excel_src_prev") != _src:
+        st.session_state.pop("_excel_base_gdf", None)
+    st.session_state["_excel_src_prev"] = _src
+
+    _base_gdf = None
 
     if _src == "Gebruik resultaat van huidige analyse":
         _base_gdf = st.session_state.get("gdf")
         if _base_gdf is None:
             st.info(
-                "\u2139\ufe0f Voer eerst een analyse uit via het tabblad **\U0001f52c Analyse**.",
-                icon="\u2139\ufe0f",
+                "ℹ️ Voer eerst een analyse uit via het tabblad **🔬 Analyse**.",
+                icon="ℹ️",
             )
         else:
             st.success(
-                f"\u2705 Analyse-resultaat geladen: "
-                f"**{len(_base_gdf)}** rijen \u00b7 {len(_base_gdf.columns)} kolommen"
+                f"✅ Analyse-resultaat geladen: "
+                f"**{len(_base_gdf)}** rijen · {len(_base_gdf.columns)} kolommen"
             )
     else:
         _gpkg_upload = st.file_uploader(
@@ -604,45 +610,64 @@ def _render_excel_join() -> None:
             type=["gpkg"],
             key="excel_gpkg_upload",
         )
-        if _gpkg_upload:
-            import tempfile
-            _tmp = Path(tempfile.mktemp(suffix=".gpkg"))
-            _tmp.write_bytes(_gpkg_upload.read())
+        if _gpkg_upload is not None:
+            import tempfile as _tempfile2
+            _tmp2 = Path(_tempfile2.mktemp(suffix=".gpkg"))
+            _tmp2.write_bytes(_gpkg_upload.read())
             try:
-                _base_gdf = gpd.read_file(_tmp, engine="pyogrio")
-                st.success(f"\u2705 GeoPackage geladen: **{len(_base_gdf)}** rijen")
+                _loaded = gpd.read_file(_tmp2, engine="pyogrio")
+                st.session_state["_excel_base_gdf"] = _loaded
             except Exception as _e:
-                st.error(f"\u274c GeoPackage kan niet worden gelezen: {_e}")
+                st.error(f"❌ GeoPackage kan niet worden gelezen: {_e}")
             finally:
-                _tmp.unlink(missing_ok=True)
+                _tmp2.unlink(missing_ok=True)
+
+        _base_gdf = st.session_state.get("_excel_base_gdf")
+        if _base_gdf is not None:
+            _cached_lbl = "✅ GeoPackage geladen" if _gpkg_upload else "💾 Eerder geladen GeoPackage actief"
+            st.success(f"{_cached_lbl}: **{len(_base_gdf)}** rijen")
+            if st.button("Wis GeoPackage", key="excel_gpkg_clear"):
+                st.session_state.pop("_excel_base_gdf", None)
+                st.rerun()
 
     if _base_gdf is None:
         return
 
-    # ?? Stap 2: Excel uploaden ????????????????????????????????????????????????
+    # -- Stap 2: Excel uploaden ------------------------------------------------
     st.divider()
-    st.subheader("\U0001f4c4 Stap 2 \u2014 Upload Excel-bestand")
+    st.subheader("📄 Stap 2 — Upload Excel-bestand")
     _xl_file = st.file_uploader(
         "Upload Excel (.xlsx of .xls)",
         type=["xlsx", "xls"],
         key="excel_upload",
     )
-    if _xl_file is None:
+    if _xl_file is not None:
+        try:
+            _xl_loaded = pd.read_excel(_xl_file)
+            st.session_state["_excel_xl_df"] = _xl_loaded
+        except Exception as _e:
+            st.error(f"❌ Excel kan niet worden gelezen: {_e}")
+            return
+
+    _xl_df = st.session_state.get("_excel_xl_df")
+    if _xl_df is None:
         return
 
-    try:
-        _xl_df = pd.read_excel(_xl_file)
-    except Exception as _e:
-        st.error(f"\u274c Excel kan niet worden gelezen: {_e}")
-        return
+    _xl_cached_lbl = "✅ Excel geladen" if _xl_file else "💾 Eerder geladen Excel actief"
+    st.success(f"{_xl_cached_lbl}: **{len(_xl_df)}** rijen · **{len(_xl_df.columns)}** kolommen")
+    _col_prev, _col_clear = st.columns([4, 1])
+    with _col_prev:
+        with st.expander("Voorbeeld Excel-data (eerste 5 rijen)"):
+            st.dataframe(_xl_df.head(), use_container_width=True)
+    with _col_clear:
+        if st.button("Wis Excel", key="excel_xl_clear"):
+            st.session_state.pop("_excel_xl_df", None)
+            st.session_state.pop("_excel_result_gdf", None)
+            st.rerun()
 
-    st.success(f"\u2705 Excel geladen: **{len(_xl_df)}** rijen \u00b7 **{len(_xl_df.columns)}** kolommen")
-    with st.expander("Voorbeeld Excel-data (eerste 5 rijen)"):
-        st.dataframe(_xl_df.head(), use_container_width=True)
-
-    # ?? Stap 3: Kolom-koppeling ???????????????????????????????????????????????
+    # -- Stap 3: Kolom-koppeling -----------------------------------------------
     st.divider()
-    st.subheader("\U0001f517 Stap 3 \u2014 Koppelkolommen instellen")
+    st.subheader("🔗 Stap 3 — Koppelkolommen instellen")
 
     _xl_cols = list(_xl_df.columns)
     _cbs_cols = [c for c in _base_gdf.columns if c != "geometry"]
@@ -650,7 +675,6 @@ def _render_excel_join() -> None:
     col_l, col_r = st.columns(2)
     with col_l:
         st.markdown("**CBS-kolom (links)**")
-        # Smart default: prefer buurt/wijk name columns
         _cbs_default_candidates = [
             c for c in _cbs_cols
             if any(k in c.lower() for k in ("naam", "name", "bu_naam", "wk_naam"))
@@ -660,12 +684,12 @@ def _render_excel_join() -> None:
             "Koppelkolom uit CBS-data",
             _cbs_cols,
             index=_cbs_cols.index(_cbs_default) if _cbs_default in _cbs_cols else 0,
+            key="excel_left_key",
             help="De kolom in de CBS-data waarop gekoppeld wordt (bijv. BU_NAAM of gemeentenaam).",
         )
 
     with col_r:
         st.markdown("**Excel-kolom (rechts)**")
-        # Smart default: prefer columns whose name matches _left_key
         _xl_default_candidates = [
             c for c in _xl_cols
             if _normalise(c) in (_normalise(_left_key), "naam", "buurtnaam", "wijknaam", "gemeentenaam")
@@ -675,54 +699,69 @@ def _render_excel_join() -> None:
             "Koppelkolom uit Excel",
             _xl_cols,
             index=_xl_cols.index(_xl_default) if _xl_default in _xl_cols else 0,
+            key="excel_right_key",
             help="De kolom in de Excel met overeenkomstige namen (bijv. buurtnaam).",
         )
 
-    # Show match preview
     _cbs_keys  = set(_base_gdf[_left_key].map(_normalise))
     _xl_keys   = set(_xl_df[_right_key].map(_normalise))
     _matched   = _cbs_keys & _xl_keys
     _unmatched = _cbs_keys - _xl_keys
     st.caption(
-        f"\U0001f50d Match-preview: **{len(_matched)}** van {len(_cbs_keys)} CBS-rijen "
-        f"gevonden in Excel \u00b7 {len(_unmatched)} niet gevonden"
+        f"🔍 Match-preview: **{len(_matched)}** van {len(_cbs_keys)} CBS-rijen "
+        f"gevonden in Excel · {len(_unmatched)} niet gevonden"
     )
     if _unmatched and len(_unmatched) <= 10:
         st.caption("Niet gevonden: " + ", ".join(f"`{v}`" for v in sorted(_unmatched)[:10]))
 
-    # ?? Stap 4: Kolommen selecteren ???????????????????????????????????????????
+    # -- Stap 4: Kolommen selecteren -------------------------------------------
     st.divider()
-    st.subheader("\U0001f4ca Stap 4 \u2014 Kies te koppelen kolommen")
+    st.subheader("📊 Stap 4 — Kies te koppelen kolommen")
     _non_key_cols = [c for c in _xl_cols if c != _right_key]
     _value_cols = st.multiselect(
         "Kolommen uit Excel om toe te voegen",
         _non_key_cols,
-        default=_non_key_cols[:min(5, len(_non_key_cols))],
+        default=st.session_state.get("_excel_value_cols_saved", _non_key_cols[:min(5, len(_non_key_cols))]),
+        key="excel_value_cols_widget",
         help="Selecteer de kolommen die je wil toevoegen aan de CBS-data.",
     )
+    st.session_state["_excel_value_cols_saved"] = _value_cols
 
     _existing = [c for c in _value_cols if c in _base_gdf.columns]
     _overwrite = False
     if _existing:
         st.warning(
-            f"\u26a0\ufe0f Kolommen al aanwezig in CBS-data: {', '.join(f'`{c}`' for c in _existing)}"
+            f"⚠️ Kolommen al aanwezig in CBS-data: {', '.join(f'`{c}`' for c in _existing)}"
         )
-        _overwrite = st.checkbox("Bestaande kolommen overschrijven", value=False)
+        _overwrite = st.checkbox("Bestaande kolommen overschrijven", value=False, key="excel_overwrite")
 
     if not _value_cols:
-        st.info("Selecteer minimaal \xe9\xe9n kolom om te koppelen.")
+        st.info("Selecteer minimaal één kolom om te koppelen.")
         return
 
-    # ?? Stap 5: Koppelen ?????????????????????????????????????????????????????
+    # -- Stap 5: Koppelen ------------------------------------------------------
     st.divider()
-    if st.button("\U0001f517 Koppelen uitvoeren", type="primary", use_container_width=True):
-        with st.spinner("Koppelen\u2026"):
+    if st.button("🔗 Koppelen uitvoeren", type="primary", use_container_width=True, key="excel_join_btn"):
+        with st.spinner("Koppelen…"):
             _result_gdf, _stats = _join_excel_to_gdf(
                 _base_gdf, _xl_df, _left_key, _right_key, _value_cols, _overwrite,
             )
+        st.session_state["_excel_result_gdf"]        = _result_gdf
+        st.session_state["_excel_result_stats"]       = _stats
+        st.session_state["_excel_result_left_key"]    = _left_key
+        st.session_state["_excel_result_value_cols"]  = _value_cols
+        st.session_state["_excel_result_src"]         = _src
+
+    # Show result (persists across reruns via session_state)
+    _result_gdf = st.session_state.get("_excel_result_gdf")
+    _stats      = st.session_state.get("_excel_result_stats")
+    if _result_gdf is not None and _stats is not None:
+        _res_left_key   = st.session_state.get("_excel_result_left_key", _left_key)
+        _res_value_cols = st.session_state.get("_excel_result_value_cols", _value_cols)
+        _res_src        = st.session_state.get("_excel_result_src", _src)
 
         st.success(
-            f"\u2705 Gekoppeld: **{_stats['matched']}** rijen gematcht \u00b7 "
+            f"✅ Gekoppeld: **{_stats['matched']}** rijen gematcht · "
             f"{_stats['unmatched']} niet gematcht"
         )
         if _stats["skipped_existing"]:
@@ -731,38 +770,36 @@ def _render_excel_join() -> None:
                 + ", ".join(f"`{c}`" for c in _stats["skipped_existing"])
             )
 
-        # Show result table
         _show_cols = (
-            [_left_key]
-            + [c for c in _value_cols if c not in _stats["skipped_existing"]]
+            [_res_left_key]
+            + [c for c in _res_value_cols if c not in _stats["skipped_existing"]]
         )
+        _show_cols = [c for c in _show_cols if c in _result_gdf.columns]
         st.dataframe(
             _result_gdf[_show_cols].head(50),
             use_container_width=True,
             hide_index=True,
         )
 
-        # Download
         _gpkg_bytes = gdf_to_gpkg_bytes(_result_gdf)
-        _fname = f"excel_verrijkt_{_left_key}.gpkg"
+        _fname = f"excel_verrijkt_{_res_left_key}.gpkg"
         st.download_button(
-            label="\u2b07\ufe0f Download verrijkt GeoPackage",
+            label="⬇️ Download verrijkt GeoPackage",
             data=_gpkg_bytes,
             file_name=_fname,
             mime="application/geopackage+sqlite3",
             type="primary",
             use_container_width=True,
+            key="excel_download_btn",
         )
 
-        # Also update session_state so the analyse tab shows updated data
-        if _src == "Gebruik resultaat van huidige analyse":
+        if _res_src == "Gebruik resultaat van huidige analyse":
             st.session_state["gdf"] = _result_gdf
             st.session_state["gpkg_bytes"] = _gpkg_bytes
             st.caption(
-                "\U0001f4a1 Analyse-resultaat bijgewerkt met Excel-data. "
-                "Bekijk de kaart en tabel in het **\U0001f52c Analyse** tabblad."
+                "💡 Analyse-resultaat bijgewerkt met Excel-data. "
+                "Bekijk de kaart en tabel in het **🔬 Analyse** tabblad."
             )
-
 
 
 # ---------------------------------------------------------------------------
@@ -1301,3 +1338,4 @@ except Exception as exc:
         import traceback
         st.code(traceback.format_exc())
     st.stop()
+
