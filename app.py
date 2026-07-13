@@ -421,12 +421,6 @@ def _make_uitleg_figure():
 
 def _render_uitleg() -> None:
     """Render the explanation tab."""
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import LinearSegmentedColormap
-    from matplotlib.patches import Polygon as MplPolygon
-    from matplotlib.path import Path as MplPath
-
     st.header("Hoe werkt de analyse?")
     st.markdown(
         "Deze tool verrijkt CBS-buurten met klimaatdata door per buurt "
