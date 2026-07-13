@@ -409,9 +409,14 @@ def _make_uitleg_figure():
                   color="white", fontsize=8, fontfamily="monospace",
                   bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
     _fig2.tight_layout(pad=1.5)
-    return _fig2, _npix, _mu, _mx, _sd
+    import io as _io2
+    _buf = _io2.BytesIO()
+    _fig2.savefig(_buf, format="png", dpi=96, bbox_inches="tight",
+                  facecolor=_fig2.get_facecolor())
+    _plt2.close(_fig2)
+    _buf.seek(0)
+    return _buf.read(), _npix, _mu, _mx, _sd
 
-_uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
 
 
 def _render_uitleg() -> None:
@@ -488,7 +493,7 @@ def _render_uitleg() -> None:
     )
 
     _uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
-    st.pyplot(_uitleg_fig, use_container_width=True)
+    st.image(_uitleg_fig, use_column_width=True)
 
     st.divider()
     st.subheader("Voorbeeld-uitkomst in de data")
@@ -1182,7 +1187,13 @@ if _prev_gdf is not None:
             )
             _ax.set_title(f"{_map_col} \u2014 {_prev_gem}", fontsize=13)
             _ax.set_axis_off()
-            st.pyplot(_fig)
+            import io as _io3
+            import matplotlib.pyplot as _plt3
+            _buf3 = _io3.BytesIO()
+            _fig.savefig(_buf3, format="png", dpi=96, bbox_inches="tight")
+            _plt3.close(_fig)
+            _buf3.seek(0)
+            st.image(_buf3.read(), use_column_width=True)
             _plt2_fallback = __import__('matplotlib.pyplot', fromlist=['pyplot'])
             _plt2_fallback.close(_fig)
             st.caption("\U0001f4a1 `pip install streamlit-folium folium` voor interactieve kaart")
