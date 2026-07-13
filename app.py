@@ -19,8 +19,6 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import yaml
-import matplotlib
-matplotlib.use('Agg')  # headless backend ? must be set before pyplot import
 
 # GDAL / rasterio thread-safety: limit to single thread to prevent segfaults
 import os as _os
@@ -339,84 +337,6 @@ def make_choropleth(
 
 
 
-@st.cache_resource(show_spinner=False)
-def _make_uitleg_figure():
-    import numpy as _np2
-    import matplotlib.pyplot as _plt2
-    from matplotlib.colors import LinearSegmentedColormap as _LSC
-    from matplotlib.patches import Polygon as _MplPoly
-    from matplotlib.path import Path as _MplPath2
-    _np2.random.seed(42)
-    _G = 12
-    _x = _np2.linspace(0, 1, _G)
-    _y = _np2.linspace(0, 1, _G)
-    _xx, _yy = _np2.meshgrid(_x, _y)
-    _raster = (28
-        + 8 * _np2.exp(-((_xx-0.65)**2 + (_yy-0.55)**2) / 0.08)
-        + 4 * _np2.exp(-((_xx-0.30)**2 + (_yy-0.40)**2) / 0.12)
-        + _np2.random.normal(0, 0.6, (_G, _G)))
-    _raster = _np2.clip(_raster, 26, 40)
-    _poly = _np2.array([
-        [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
-        [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
-    ])
-    _mpath = _MplPath2(_poly)
-    _cw = 1.0 / _G
-    _inside = _np2.array([
-        [_mpath.contains_point(((_c+.5)*_cw, (_r+.5)*_cw)) for _c in range(_G)]
-        for _r in range(_G)
-    ])
-    _vals = _raster[_inside]
-    _npix = len(_vals)
-    _mu   = float(_vals.mean())
-    _mx   = float(_vals.max())
-    _sd   = float(_vals.std())
-    _cmap_h = _LSC.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
-    _fig2, _axes2 = _plt2.subplots(1, 3, figsize=(14, 4.5))
-    _fig2.patch.set_facecolor("#0e1117")
-    for _ax2, _t2 in zip(_axes2, [
-        "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
-        "\u2461 Buurtvlak over raster",
-        "\u2462 Pixels binnen de buurt",
-    ]):
-        _ax2.set_facecolor("#0e1117")
-        _ax2.set_title(_t2, color="white", fontsize=9, pad=8)
-        _ax2.set_xlim(0,1); _ax2.set_ylim(0,1); _ax2.set_aspect("equal")
-        _ax2.tick_params(colors="white", labelsize=7)
-        for _sp in _ax2.spines.values():
-            _sp.set_edgecolor("#444")
-    _im2 = _axes2[0].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
-                            cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
-    _cb2 = _fig2.colorbar(_im2, ax=_axes2[0], fraction=.046, pad=.04)
-    _cb2.set_label("\xb0C", color="white", fontsize=8)
-    _cb2.ax.yaxis.set_tick_params(color="white")
-    _plt2.setp(_cb2.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
-    _axes2[1].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
-                    cmap=_cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
-    _axes2[1].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
-    _axes2[1].text(0.5, 0.5, "Buurt\nWoensel-Noord", ha="center", va="center",
-                  color="white", fontsize=8, fontweight="bold",
-                  bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
-    _grey = _np2.full_like(_raster, 27.0)
-    _axes2[2].imshow(_np2.flipud(_grey), extent=[0,1,0,1],
-                    cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
-    _axes2[2].imshow(_np2.flipud(_np2.ma.masked_where(~_inside, _raster)),
-                    extent=[0,1,0,1], cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
-    _axes2[2].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
-    _axes2[2].text(0.97, 0.03,
-                  f"n = {_npix} pixels\nmean = {_mu:.1f} \xb0C\nmax  = {_mx:.1f} \xb0C\nstd  = {_sd:.1f} \xb0C",
-                  transform=_axes2[2].transAxes, ha="right", va="bottom",
-                  color="white", fontsize=8, fontfamily="monospace",
-                  bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
-    _fig2.tight_layout(pad=1.5)
-    import io as _io2
-    _buf = _io2.BytesIO()
-    _fig2.savefig(_buf, format="png", dpi=96, bbox_inches="tight",
-                  facecolor=_fig2.get_facecolor())
-    _plt2.close(_fig2)
-    _buf.seek(0)
-    return _buf.read(), _npix, _mu, _mx, _sd
-
 
 
 def _render_uitleg() -> None:
@@ -486,8 +406,19 @@ def _render_uitleg() -> None:
         "Het raster heeft een resolutie van 50 m \u2014 elke pixel dekt 50\xd750 meter."
     )
 
-    _uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
-    st.image(_uitleg_fig, use_column_width=True)
+    st.markdown(
+        """
+<div style="background:#1a1a2e;border-radius:12px;padding:16px 20px;font-family:monospace;font-size:13px;color:#e0e0e0;border:1px solid #333">
+<b style="color:#00cfff">Voorbeeld: Buurt Woensel-Noord</b><br><br>
+Stel: het hitte-eiland raster heeft resolutie 50 m. Per buurt worden alle pixels <b>binnen</b> de polygoon verzameld:<br><br>
+&nbsp;&nbsp;?? Warme pixels (klasse 5?9) &nbsp; ? &nbsp; temperatuurverhoging > 2,5?C<br>
+&nbsp;&nbsp;?? Gematigde pixels (klasse 2?4) &nbsp; ? &nbsp; temperatuurverhoging 1?2?C<br>
+&nbsp;&nbsp;? Koele pixels (klasse 0?1) &nbsp; ? &nbsp; vrijwel geen effect<br><br>
+Uitkomst: <b>majority = 4</b> &nbsp;|&nbsp; <b>mean = 3.8</b> &nbsp;|&nbsp; <b>max = 7</b> &nbsp;|&nbsp; <b>count = 42 pixels</b>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
     st.divider()
     st.subheader("Voorbeeld-uitkomst in de data")
@@ -495,10 +426,10 @@ def _render_uitleg() -> None:
         f"Na de analyse krijgt elke buurt nieuwe kolommen in de output GeoPackage:\n\n"
         f"| Kolom | Waarde | Betekenis |\n"
         f"|---|---|---|\n"
-        f"| `hitteeiland_mean` | **{mu:.1f} \xb0C** | Gemiddelde gevoelstemperatuur |\n"
-        f"| `hitteeiland_max` | **{mx:.1f} \xb0C** | Warmste pixel in de buurt |\n"
-        f"| `hitteeiland_std` | **{sd:.1f} \xb0C** | Spreiding \u2014 maat voor ruimtelijke ongelijkheid |\n"
-        f"| `hitteeiland_count` | **{n_pix}** | Aantal pixels \u2014 proxy voor buurtoppervlak |\n"
+        f"| `hitteeiland_mean` | **34.2 \xb0C** | Gemiddelde gevoelstemperatuur |\n"
+        f"| `hitteeiland_max` | **37.8 \xb0C** | Warmste pixel in de buurt |\n"
+        f"| `hitteeiland_std` | **2.1 \xb0C** | Spreiding \u2014 maat voor ruimtelijke ongelijkheid |\n"
+        f"| `hitteeiland_count` | **42** | Aantal pixels \u2014 proxy voor buurtoppervlak |\n"
         f"| `wijktype_definitief` | `Tuinstad middelhoogbouw` | Stedenbouwkundig type (via WFS) |\n\n"
         "> \U0001f4a1 **Tip:** Een hoge **max** bij lage **std** wijst op een lokale hitteplek "
         "(bijv. een heet parkeerterrein). Een hoge **std** duidt op een gemengde buurt "
@@ -1173,25 +1104,10 @@ if _prev_gdf is not None:
                 use_container_width=True, height=520,
             )
         except ImportError:
-            import matplotlib.pyplot as plt
-            _fig, _ax = plt.subplots(figsize=(10, 8))
-            _prev_gdf.to_crs("EPSG:4326").plot(
-                column=_map_col, ax=_ax, legend=True, cmap="YlOrRd",
-                missing_kwds={"color": "#cccccc", "label": "geen data"},
+            st.info(
+                "💡 Installeer `streamlit-folium` en `folium` voor de interactieve kaart: "
+                "`pip install streamlit-folium folium`"
             )
-            _ax.set_title(f"{_map_col} \u2014 {_prev_gem}", fontsize=13)
-            _ax.set_axis_off()
-            import io as _io3
-            import matplotlib.pyplot as _plt3
-            _buf3 = _io3.BytesIO()
-            _fig.savefig(_buf3, format="png", dpi=96, bbox_inches="tight")
-            _plt3.close(_fig)
-            _buf3.seek(0)
-            st.image(_buf3.read(), use_column_width=True)
-            _plt2_fallback = __import__('matplotlib.pyplot', fromlist=['pyplot'])
-            _plt2_fallback.close(_fig)
-            st.caption("\U0001f4a1 `pip install streamlit-folium folium` voor interactieve kaart")
-
     st.divider()
     st.caption(
         "klimaat-wijkprofielen-poc · "
