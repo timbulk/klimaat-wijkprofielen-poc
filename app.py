@@ -19,6 +19,8 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import yaml
+import matplotlib
+matplotlib.use('Agg')  # headless backend ? must be set before pyplot import
 
 # Make scripts/ importable
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
@@ -404,79 +406,80 @@ def _render_uitleg() -> None:
         "Het raster heeft een resolutie van 50 m \u2014 elke pixel dekt 50\xd750 meter."
     )
 
-    np.random.seed(42)
-    G = 12
-    x = np.linspace(0, 1, G); y = np.linspace(0, 1, G)
-    xx, yy = np.meshgrid(x, y)
-    raster = (28
-        + 8 * np.exp(-((xx-0.65)**2 + (yy-0.55)**2) / 0.08)
-        + 4 * np.exp(-((xx-0.30)**2 + (yy-0.40)**2) / 0.12)
-        + np.random.normal(0, 0.6, (G, G)))
-    raster = np.clip(raster, 26, 40)
+    @st.cache_resource(show_spinner=False)
+    def _make_uitleg_figure():
+        import numpy as _np2
+        import matplotlib.pyplot as _plt2
+        from matplotlib.colors import LinearSegmentedColormap as _LSC
+        from matplotlib.patches import Polygon as _MplPoly
+        from matplotlib.path import Path as _MplPath2
+        _np2.random.seed(42)
+        _G = 12
+        _x = _np2.linspace(0, 1, _G)
+        _y = _np2.linspace(0, 1, _G)
+        _xx, _yy = _np2.meshgrid(_x, _y)
+        _raster = (28
+            + 8 * _np2.exp(-((_xx-0.65)**2 + (_yy-0.55)**2) / 0.08)
+            + 4 * _np2.exp(-((_xx-0.30)**2 + (_yy-0.40)**2) / 0.12)
+            + _np2.random.normal(0, 0.6, (_G, _G)))
+        _raster = _np2.clip(_raster, 26, 40)
+        _poly = _np2.array([
+            [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
+            [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
+        ])
+        _mpath = _MplPath2(_poly)
+        _cw = 1.0 / _G
+        _inside = _np2.array([
+            [_mpath.contains_point(((_c+.5)*_cw, (_r+.5)*_cw)) for _c in range(_G)]
+            for _r in range(_G)
+        ])
+        _vals = _raster[_inside]
+        _npix = len(_vals)
+        _mu   = float(_vals.mean())
+        _mx   = float(_vals.max())
+        _sd   = float(_vals.std())
+        _cmap_h = _LSC.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
+        _fig2, _axes2 = _plt2.subplots(1, 3, figsize=(14, 4.5))
+        _fig2.patch.set_facecolor("#0e1117")
+        for _ax2, _t2 in zip(_axes2, [
+            "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
+            "\u2461 Buurtvlak over raster",
+            "\u2462 Pixels binnen de buurt",
+        ]):
+            _ax2.set_facecolor("#0e1117")
+            _ax2.set_title(_t2, color="white", fontsize=9, pad=8)
+            _ax2.set_xlim(0,1); _ax2.set_ylim(0,1); _ax2.set_aspect("equal")
+            _ax2.tick_params(colors="white", labelsize=7)
+            for _sp in _ax2.spines.values():
+                _sp.set_edgecolor("#444")
+        _im2 = _axes2[0].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
+                                cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
+        _cb2 = _fig2.colorbar(_im2, ax=_axes2[0], fraction=.046, pad=.04)
+        _cb2.set_label("\xb0C", color="white", fontsize=8)
+        _cb2.ax.yaxis.set_tick_params(color="white")
+        _plt2.setp(_cb2.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
+        _axes2[1].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
+                        cmap=_cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
+        _axes2[1].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
+        _axes2[1].text(0.5, 0.5, "Buurt\nWoensel-Noord", ha="center", va="center",
+                      color="white", fontsize=8, fontweight="bold",
+                      bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
+        _grey = _np2.full_like(_raster, 27.0)
+        _axes2[2].imshow(_np2.flipud(_grey), extent=[0,1,0,1],
+                        cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
+        _axes2[2].imshow(_np2.flipud(_np2.ma.masked_where(~_inside, _raster)),
+                        extent=[0,1,0,1], cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
+        _axes2[2].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
+        _axes2[2].text(0.97, 0.03,
+                      f"n = {_npix} pixels\nmean = {_mu:.1f} \xb0C\nmax  = {_mx:.1f} \xb0C\nstd  = {_sd:.1f} \xb0C",
+                      transform=_axes2[2].transAxes, ha="right", va="bottom",
+                      color="white", fontsize=8, fontfamily="monospace",
+                      bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
+        _fig2.tight_layout(pad=1.5)
+        return _fig2, _npix, _mu, _mx, _sd
 
-    poly = np.array([
-        [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
-        [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
-    ])
-    path  = MplPath(poly)
-    cw    = 1.0 / G
-    inside = np.array([
-        [path.contains_point(((c+.5)*cw,(r+.5)*cw)) for c in range(G)]
-        for r in range(G)
-    ])
-
-    vals   = raster[inside]
-    n_pix  = len(vals)
-    mu     = vals.mean()
-    mx     = vals.max()
-    sd     = vals.std()
-
-    cmap_h = LinearSegmentedColormap.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
-    fig.patch.set_facecolor("#0e1117")
-
-    panel_titles = [
-        "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
-        "\u2461 Buurtvlak over raster",
-        "\u2462 Pixels binnen de buurt",
-    ]
-    for ax, t in zip(axes, panel_titles):
-        ax.set_facecolor("#0e1117"); ax.set_title(t, color="white", fontsize=9, pad=8)
-        ax.set_xlim(0,1); ax.set_ylim(0,1); ax.set_aspect("equal")
-        ax.tick_params(colors="white", labelsize=7)
-        for sp in ax.spines.values(): sp.set_edgecolor("#444")
-
-    im = axes[0].imshow(np.flipud(raster), extent=[0,1,0,1],
-                        cmap=cmap_h, vmin=26, vmax=40, origin="upper")
-    cb = fig.colorbar(im, ax=axes[0], fraction=.046, pad=.04)
-    cb.set_label("\xb0C", color="white", fontsize=8)
-    cb.ax.yaxis.set_tick_params(color="white")
-    plt.setp(cb.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
-
-    axes[1].imshow(np.flipud(raster), extent=[0,1,0,1],
-                   cmap=cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
-    axes[1].add_patch(MplPolygon(poly, closed=True,
-                                 edgecolor="#00cfff", facecolor="none", lw=2))
-    axes[1].text(0.5, 0.5, "Buurt\nWoensel-Noord",
-                 ha="center", va="center", color="white", fontsize=8, fontweight="bold",
-                 bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
-
-    grey = np.full_like(raster, 27.0)
-    axes[2].imshow(np.flipud(grey), extent=[0,1,0,1],
-                   cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
-    axes[2].imshow(np.flipud(np.ma.masked_where(~inside, raster)), extent=[0,1,0,1],
-                   cmap=cmap_h, vmin=26, vmax=40, origin="upper")
-    axes[2].add_patch(MplPolygon(poly, closed=True,
-                                 edgecolor="#00cfff", facecolor="none", lw=2))
-    axes[2].text(0.97, 0.03,
-                 f"n = {n_pix} pixels\nmean = {mu:.1f} \xb0C\nmax  = {mx:.1f} \xb0C\nstd  = {sd:.1f} \xb0C",
-                 transform=axes[2].transAxes, ha="right", va="bottom",
-                 color="white", fontsize=8, fontfamily="monospace",
-                 bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
-
-    fig.tight_layout(pad=1.5)
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    _uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
+    st.pyplot(_uitleg_fig, use_container_width=True)
 
     st.divider()
     st.subheader("Voorbeeld-uitkomst in de data")
@@ -1171,6 +1174,8 @@ if _prev_gdf is not None:
             _ax.set_title(f"{_map_col} \u2014 {_prev_gem}", fontsize=13)
             _ax.set_axis_off()
             st.pyplot(_fig)
+            _plt2_fallback = __import__('matplotlib.pyplot', fromlist=['pyplot'])
+            _plt2_fallback.close(_fig)
             st.caption("\U0001f4a1 `pip install streamlit-folium folium` voor interactieve kaart")
 
     st.divider()
@@ -1338,4 +1343,5 @@ except Exception as exc:
         import traceback
         st.code(traceback.format_exc())
     st.stop()
+
 
