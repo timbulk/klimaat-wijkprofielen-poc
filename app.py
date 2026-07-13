@@ -9,6 +9,16 @@ Run from the project root:
 
 from __future__ import annotations
 
+import faulthandler as _fh
+_fh.enable()  # print C-level stack trace on segfault
+
+import os as _os
+# GDAL / rasterio thread-safety ? MUST be set before any GDAL-linked library is imported
+_os.environ["GDAL_NUM_THREADS"] = "1"
+_os.environ["OMP_NUM_THREADS"]  = "1"
+_os.environ["GDAL_CACHEMAX"]    = "64"
+_os.environ["VSI_CACHE"]        = "FALSE"
+
 import io
 import sys
 import tempfile
@@ -19,12 +29,6 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 import yaml
-
-# GDAL / rasterio thread-safety: limit to single thread to prevent segfaults
-import os as _os
-_os.environ.setdefault("GDAL_NUM_THREADS", "1")
-_os.environ.setdefault("OMP_NUM_THREADS", "1")
-_os.environ.setdefault("GDAL_CACHEMAX", "128")  # MB, prevent memory spikes
 
 # Make scripts/ importable
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
@@ -129,17 +133,14 @@ def load_config() -> dict:
 
 @st.cache_data(show_spinner=False)
 def list_gpkg_layers(gpkg_path: str) -> list[str]:
-    """Return the layer names available in a GeoPackage.
-
-    Uses fiona to read the layer list without loading any geometries.
-    Returns an empty list when the file does not exist or cannot be read.
-    """
-    import fiona
+    """Return layer names from a GeoPackage using pyogrio (no fiona import)."""
+    import pyogrio
     path = Path(gpkg_path)
     if not path.exists():
         return []
     try:
-        return fiona.listlayers(str(path))
+        # pyogrio.list_layers returns array of [name, geometry_type]
+        return [str(row[0]) for row in pyogrio.list_layers(str(path))]
     except Exception:
         return []
 
