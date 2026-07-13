@@ -389,12 +389,7 @@ def _render_uitleg() -> None:
             9:"≥ 4,5°C"
         }.items()
     ])
-    st.dataframe(_klassen_df, hide_index=True, use_container_width=True,
-        column_config={
-            "Klasse": st.column_config.NumberColumn(width="small"),
-            "Temperatuurverhoging": st.column_config.TextColumn(width="medium"),
-            "Interpretatie": st.column_config.TextColumn(width="medium"),
-        })
+    st.table(_klassen_df)
     st.markdown(
         "> 💡 De tool voegt automatisch een kolom **`{prefix}_temp_klasse`** toe "
         "met de leesbare temperatuurverhoging per buurt, naast de ruwe klassewaarde."
