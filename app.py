@@ -1,4 +1,4 @@
-﻿"""
+"""
 app.py
 ------
 Streamlit web interface for the klimaat-wijkprofielen-poc pipeline.
@@ -21,6 +21,12 @@ import streamlit as st
 import yaml
 import matplotlib
 matplotlib.use('Agg')  # headless backend ? must be set before pyplot import
+
+# GDAL / rasterio thread-safety: limit to single thread to prevent segfaults
+import os as _os
+_os.environ.setdefault("GDAL_NUM_THREADS", "1")
+_os.environ.setdefault("OMP_NUM_THREADS", "1")
+_os.environ.setdefault("GDAL_CACHEMAX", "128")  # MB, prevent memory spikes
 
 # Make scripts/ importable
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
@@ -333,6 +339,81 @@ def make_choropleth(
 
 
 
+@st.cache_resource(show_spinner=False)
+def _make_uitleg_figure():
+    import numpy as _np2
+    import matplotlib.pyplot as _plt2
+    from matplotlib.colors import LinearSegmentedColormap as _LSC
+    from matplotlib.patches import Polygon as _MplPoly
+    from matplotlib.path import Path as _MplPath2
+    _np2.random.seed(42)
+    _G = 12
+    _x = _np2.linspace(0, 1, _G)
+    _y = _np2.linspace(0, 1, _G)
+    _xx, _yy = _np2.meshgrid(_x, _y)
+    _raster = (28
+        + 8 * _np2.exp(-((_xx-0.65)**2 + (_yy-0.55)**2) / 0.08)
+        + 4 * _np2.exp(-((_xx-0.30)**2 + (_yy-0.40)**2) / 0.12)
+        + _np2.random.normal(0, 0.6, (_G, _G)))
+    _raster = _np2.clip(_raster, 26, 40)
+    _poly = _np2.array([
+        [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
+        [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
+    ])
+    _mpath = _MplPath2(_poly)
+    _cw = 1.0 / _G
+    _inside = _np2.array([
+        [_mpath.contains_point(((_c+.5)*_cw, (_r+.5)*_cw)) for _c in range(_G)]
+        for _r in range(_G)
+    ])
+    _vals = _raster[_inside]
+    _npix = len(_vals)
+    _mu   = float(_vals.mean())
+    _mx   = float(_vals.max())
+    _sd   = float(_vals.std())
+    _cmap_h = _LSC.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
+    _fig2, _axes2 = _plt2.subplots(1, 3, figsize=(14, 4.5))
+    _fig2.patch.set_facecolor("#0e1117")
+    for _ax2, _t2 in zip(_axes2, [
+        "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
+        "\u2461 Buurtvlak over raster",
+        "\u2462 Pixels binnen de buurt",
+    ]):
+        _ax2.set_facecolor("#0e1117")
+        _ax2.set_title(_t2, color="white", fontsize=9, pad=8)
+        _ax2.set_xlim(0,1); _ax2.set_ylim(0,1); _ax2.set_aspect("equal")
+        _ax2.tick_params(colors="white", labelsize=7)
+        for _sp in _ax2.spines.values():
+            _sp.set_edgecolor("#444")
+    _im2 = _axes2[0].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
+                            cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
+    _cb2 = _fig2.colorbar(_im2, ax=_axes2[0], fraction=.046, pad=.04)
+    _cb2.set_label("\xb0C", color="white", fontsize=8)
+    _cb2.ax.yaxis.set_tick_params(color="white")
+    _plt2.setp(_cb2.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
+    _axes2[1].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
+                    cmap=_cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
+    _axes2[1].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
+    _axes2[1].text(0.5, 0.5, "Buurt\nWoensel-Noord", ha="center", va="center",
+                  color="white", fontsize=8, fontweight="bold",
+                  bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
+    _grey = _np2.full_like(_raster, 27.0)
+    _axes2[2].imshow(_np2.flipud(_grey), extent=[0,1,0,1],
+                    cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
+    _axes2[2].imshow(_np2.flipud(_np2.ma.masked_where(~_inside, _raster)),
+                    extent=[0,1,0,1], cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
+    _axes2[2].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
+    _axes2[2].text(0.97, 0.03,
+                  f"n = {_npix} pixels\nmean = {_mu:.1f} \xb0C\nmax  = {_mx:.1f} \xb0C\nstd  = {_sd:.1f} \xb0C",
+                  transform=_axes2[2].transAxes, ha="right", va="bottom",
+                  color="white", fontsize=8, fontfamily="monospace",
+                  bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
+    _fig2.tight_layout(pad=1.5)
+    return _fig2, _npix, _mu, _mx, _sd
+
+_uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
+
+
 def _render_uitleg() -> None:
     """Render the explanation tab."""
     import numpy as np
@@ -405,78 +486,6 @@ def _render_uitleg() -> None:
         "Stel: we analyseren het **hitte-eiland effect** voor een buurt in Eindhoven. "
         "Het raster heeft een resolutie van 50 m \u2014 elke pixel dekt 50\xd750 meter."
     )
-
-    @st.cache_resource(show_spinner=False)
-    def _make_uitleg_figure():
-        import numpy as _np2
-        import matplotlib.pyplot as _plt2
-        from matplotlib.colors import LinearSegmentedColormap as _LSC
-        from matplotlib.patches import Polygon as _MplPoly
-        from matplotlib.path import Path as _MplPath2
-        _np2.random.seed(42)
-        _G = 12
-        _x = _np2.linspace(0, 1, _G)
-        _y = _np2.linspace(0, 1, _G)
-        _xx, _yy = _np2.meshgrid(_x, _y)
-        _raster = (28
-            + 8 * _np2.exp(-((_xx-0.65)**2 + (_yy-0.55)**2) / 0.08)
-            + 4 * _np2.exp(-((_xx-0.30)**2 + (_yy-0.40)**2) / 0.12)
-            + _np2.random.normal(0, 0.6, (_G, _G)))
-        _raster = _np2.clip(_raster, 26, 40)
-        _poly = _np2.array([
-            [0.15,0.20],[0.55,0.10],[0.85,0.25],[0.90,0.60],
-            [0.70,0.85],[0.35,0.90],[0.10,0.70],[0.12,0.40],
-        ])
-        _mpath = _MplPath2(_poly)
-        _cw = 1.0 / _G
-        _inside = _np2.array([
-            [_mpath.contains_point(((_c+.5)*_cw, (_r+.5)*_cw)) for _c in range(_G)]
-            for _r in range(_G)
-        ])
-        _vals = _raster[_inside]
-        _npix = len(_vals)
-        _mu   = float(_vals.mean())
-        _mx   = float(_vals.max())
-        _sd   = float(_vals.std())
-        _cmap_h = _LSC.from_list("h", ["#fee8c8","#fdbb84","#e34a33","#b30000"])
-        _fig2, _axes2 = _plt2.subplots(1, 3, figsize=(14, 4.5))
-        _fig2.patch.set_facecolor("#0e1117")
-        for _ax2, _t2 in zip(_axes2, [
-            "\u2460 Rasterlaag (gevoelstemperatuur \xb0C)",
-            "\u2461 Buurtvlak over raster",
-            "\u2462 Pixels binnen de buurt",
-        ]):
-            _ax2.set_facecolor("#0e1117")
-            _ax2.set_title(_t2, color="white", fontsize=9, pad=8)
-            _ax2.set_xlim(0,1); _ax2.set_ylim(0,1); _ax2.set_aspect("equal")
-            _ax2.tick_params(colors="white", labelsize=7)
-            for _sp in _ax2.spines.values():
-                _sp.set_edgecolor("#444")
-        _im2 = _axes2[0].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
-                                cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
-        _cb2 = _fig2.colorbar(_im2, ax=_axes2[0], fraction=.046, pad=.04)
-        _cb2.set_label("\xb0C", color="white", fontsize=8)
-        _cb2.ax.yaxis.set_tick_params(color="white")
-        _plt2.setp(_cb2.ax.yaxis.get_ticklabels(), color="white", fontsize=7)
-        _axes2[1].imshow(_np2.flipud(_raster), extent=[0,1,0,1],
-                        cmap=_cmap_h, vmin=26, vmax=40, origin="upper", alpha=0.55)
-        _axes2[1].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
-        _axes2[1].text(0.5, 0.5, "Buurt\nWoensel-Noord", ha="center", va="center",
-                      color="white", fontsize=8, fontweight="bold",
-                      bbox=dict(boxstyle="round,pad=0.3", fc="#00000088", ec="none"))
-        _grey = _np2.full_like(_raster, 27.0)
-        _axes2[2].imshow(_np2.flipud(_grey), extent=[0,1,0,1],
-                        cmap="Greys", vmin=24, vmax=42, origin="upper", alpha=0.25)
-        _axes2[2].imshow(_np2.flipud(_np2.ma.masked_where(~_inside, _raster)),
-                        extent=[0,1,0,1], cmap=_cmap_h, vmin=26, vmax=40, origin="upper")
-        _axes2[2].add_patch(_MplPoly(_poly, closed=True, edgecolor="#00cfff", facecolor="none", lw=2))
-        _axes2[2].text(0.97, 0.03,
-                      f"n = {_npix} pixels\nmean = {_mu:.1f} \xb0C\nmax  = {_mx:.1f} \xb0C\nstd  = {_sd:.1f} \xb0C",
-                      transform=_axes2[2].transAxes, ha="right", va="bottom",
-                      color="white", fontsize=8, fontfamily="monospace",
-                      bbox=dict(boxstyle="round,pad=0.4", fc="#00000099", ec="#00cfff", lw=1))
-        _fig2.tight_layout(pad=1.5)
-        return _fig2, _npix, _mu, _mx, _sd
 
     _uitleg_fig, n_pix, mu, mx, sd = _make_uitleg_figure()
     st.pyplot(_uitleg_fig, use_container_width=True)
