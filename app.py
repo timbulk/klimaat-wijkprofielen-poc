@@ -51,7 +51,7 @@ WMS_URL = "https://cas.cloud.sogelink.com/public/data/org/gws/YWFMLMWERURF/kea_p
 WMS_LAYERS_FALLBACK = {
     "Hitte-eiland (gevoelstemperatuur)":  "hitteeiland_r_hitte",
     "Waterdiepte neerslag 140 mm/2 uur":  "waterdiepte_neerslag_140mm_2uur",
-    "Waterdiepte neerslag 70 mm/1 uur":   "waterdiepte_neerslag_70mm_1uur",
+    "Waterdiepte neerslag 70 mm/1 uur":   "waterdiepte_neerslag_70mm_2uur",
     "Droogte — neerslagtekort":           "droogte_r_neerslagtekort",
     "Hitte — gevoelstemperatuur dag":     "hitteeiland_r_hitte_dag",
     "Stedelijke hitte (LST)":             "hitteeiland_r_lst",
@@ -73,9 +73,41 @@ HITTE_KLASSEN = {
     9: "≥ 4,5°C",
 }
 
+# Waterdiepte neerslag klassen: pixelwaarde (palette-index) → waterdiepte
+# Waarden 63/126/189/252 zijn palette-indices in de KEA WMS PNG (= klas 1–4)
+WATERDIEPTE_KLASSEN = {
+    0:   "geen inundatie",
+    63:  "< 5 cm",
+    126: "5 – 30 cm",
+    189: "30 – 100 cm",
+    252: "> 100 cm",
+    253: "onbepaald",
+}
+
+# Afstand tot koelte: R-kanaalwaarde (0–255) → afstandsklasse
+# De WMS levert een RGB-visualisatielaag; band 1 (rood) loopt van donker (dicht) naar licht (ver)
+AFSTAND_KLASSEN = {
+    0:   "< 100 m",
+    64:  "100 – 300 m",
+    128: "300 – 500 m",
+    192: "500 – 1 000 m",
+    240: "> 1 000 m",
+}
+
+# Koppeling laagnaam → klassen-dict (voor geclassificeerde én vertaalde lagen)
+WMS_LAYER_KLASSEN: dict[str, dict] = {
+    "hitteeiland":                     HITTE_KLASSEN,
+    "waterdiepte_neerslag_140mm_2uur":  WATERDIEPTE_KLASSEN,
+    "waterdiepte_neerslag_70mm_2uur":   WATERDIEPTE_KLASSEN,
+    "Afstand_tot_koelte":               AFSTAND_KLASSEN,
+}
+
 # Lagen waarvan we weten dat de pixelwaarden klassen zijn (niet absolute meetwaarden)
 WMS_CLASSIFIED_LAYERS = {
     "hitteeiland",
+    "waterdiepte_neerslag_140mm_2uur",
+    "waterdiepte_neerslag_70mm_2uur",
+    "Afstand_tot_koelte",
     "sociale_kwetsbaarheid_hitte",
     "Nachthitte_WarmeAvond20gr",
     "Nachthitte_WarmeAvond24gr",
@@ -236,9 +268,9 @@ def make_choropleth(
     m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
     Fullscreen().add_to(m)
 
-    # _temp_klasse columns: ordinal strings -> warm choropleth via numeric proxy
-    _is_temp_klasse = column.endswith("_temp_klasse")
-    is_cat = (not _is_temp_klasse) and (
+    # _klasse columns: ordinal strings -> warm choropleth via numeric proxy
+    _is_klasse = column.endswith("_klasse")
+    is_cat = (not _is_klasse) and (
         gdf_wgs[column].dtype == object or str(gdf_wgs[column].dtype) == "category"
     )
     extra      = [c for c in (tooltip_extra or []) if c in gdf_wgs.columns and c != column]
@@ -246,7 +278,7 @@ def make_choropleth(
 
     # For temp_klasse: add a numeric proxy column for the choropleth color scale
     _HITTE_REV = {v: k for k, v in HITTE_KLASSEN.items()}
-    if _is_temp_klasse:
+    if _is_klasse:
         _num_col = f"__klasse_num_{column}"
         gdf_wgs = gdf_wgs.copy()
         gdf_wgs[_num_col] = gdf_wgs[column].map(
@@ -293,10 +325,10 @@ def make_choropleth(
     else:
         _plot_data = gdf_wgs[[column]].reset_index()
         _plot_data[column] = pd.to_numeric(_plot_data[column], errors="coerce")
-        _choro_col = _num_col if _is_temp_klasse else column
+        _choro_col = _num_col if _is_klasse else column
         _choro_label = (
             f"{column} (klasse 0–9 = temperatuurverhoging)"
-            if _is_temp_klasse else column
+            if _is_klasse else column
         )
         _plot_data = gdf_wgs[[_choro_col]].reset_index()
         _plot_data[_choro_col] = pd.to_numeric(_plot_data[_choro_col], errors="coerce")
@@ -391,8 +423,27 @@ def _render_uitleg() -> None:
     ])
     st.table(_klassen_df)
     st.markdown(
-        "> 💡 De tool voegt automatisch een kolom **`{prefix}_temp_klasse`** toe "
-        "met de leesbare temperatuurverhoging per buurt, naast de ruwe klassewaarde."
+        "> 💡 De tool voegt automatisch een kolom **`{prefix}_klasse`** toe "
+        "met de leesbare waarde per buurt, naast de ruwe klassewaarde."
+    )
+
+    st.subheader("🌧️ Waterdiepte neerslag klassen")
+    st.markdown(
+        "De **waterdiepte neerslag**-lagen (70 mm/2 uur = T=100, 140 mm/2 uur = T=1000) "
+        "bevatten ook geclassificeerde waarden:"
+    )
+    import pandas as _pd2
+    _wd_df = _pd2.DataFrame([
+        {"Klasse": k, "Waterdiepte": v,
+         "Interpretatie": ["Geen overlast","Beperkte overlast","Matige overlast","Ernstige overlast","Onbepaald"][i]}
+        for i, (k, v) in enumerate([(0,"geen inundatie"),(63,"< 5 cm"),(126,"5 – 30 cm"),(189,"30 – 100 cm"),(252,"> 100 cm")])
+    ])
+    st.table(_wd_df)
+    st.markdown(
+        "> 💡 Voor **Afstand tot koelte** levert de WMS een RGB-visualisatielaag. "
+        "De tool berekent statistieken op band 1 (roodkanaal, 0–255) en vertaalt dit naar "
+        "een globale afstandsklasse (< 100 m → > 1 000 m). "
+        "Gebruik dit als indicatieve maat, niet als exacte afstand."
     )
     st.divider()
     st.subheader("Visueel voorbeeld: hitte-eiland effect")
@@ -1009,9 +1060,9 @@ _prev_gem   = st.session_state.get("gemeente", "")
 if _prev_gdf is not None:
     _added      = [c for c in _prev_gdf.columns if c not in _prev_cols and c != "geometry"]
     _wt_cols    = [c for c in _added if c.startswith("wijktype")]
-    _label_cols = [c for c in _added if c.endswith("_temp_klasse")]
+    _label_cols = [c for c in _added if c.endswith("_klasse")]
     _stat_cols  = [c for c in _added if not c.endswith("_norm") and "pct_above" not in c
-                   and not c.startswith("wijktype") and not c.endswith("_temp_klasse")]
+                   and not c.startswith("wijktype") and not c.endswith("_klasse")]
     _thresh_cols= [c for c in _added if "pct_above" in c]
     _norm_cols  = [c for c in _added if c.endswith("_norm")]
 
@@ -1197,22 +1248,30 @@ try:
                 gdf = _enrich_from_raster(
                     gdf, tmp_path, prefix, stats_for_layer, threshold, normalize,
                 )
-                # Voeg leesbare temperatuurlabels toe voor geclassificeerde lagen
+                # Voeg leesbare klasse-labels toe voor geclassificeerde lagen
                 if wms_layer_name in WMS_CLASSIFIED_LAYERS:
-                    # Gebruik majority als die er is, anders mean afgerond
+                    _klassen_dict = WMS_LAYER_KLASSEN.get(wms_layer_name, HITTE_KLASSEN)
+                    # Zoek bronkolom: majority heeft voorkeur, anders majority op mean
                     src_col = f"{prefix}_majority"
                     if src_col not in gdf.columns:
                         src_col = f"{prefix}_mean"
                     if src_col in gdf.columns:
-                        def _to_klasse(v, _hk=HITTE_KLASSEN):
+                        _klasse_keys = sorted(_klassen_dict.keys())
+                        def _to_klasse(v, _kd=_klassen_dict, _keys=_klasse_keys):
                             try:
-                                return _hk.get(min(9, max(0, int(round(float(v))))), "?")
+                                v_int = int(round(float(v)))
+                                # Exact match first
+                                if v_int in _kd:
+                                    return _kd[v_int]
+                                # Nearest key (for continuous-to-class mapping)
+                                nearest = min(_keys, key=lambda k: abs(k - v_int))
+                                return _kd[nearest]
                             except (TypeError, ValueError):
                                 return None
-                        gdf[f"{prefix}_temp_klasse"] = gdf[src_col].map(_to_klasse)
+                        _klasse_col = f"{prefix}_klasse"
+                        gdf[_klasse_col] = gdf[src_col].map(_to_klasse)
                         status.info(
-                            f"🌡️ Temperatuurklassen toegevoegd: "
-                            f"`{prefix}_temp_klasse`"
+                            f"🏷️ Klassen toegevoegd: `{_klasse_col}`"
                         )
     else:
         local_path = PROJECT_ROOT / local_raster_path
